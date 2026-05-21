@@ -6,6 +6,21 @@
     "main"
   ],
   "permissions": [
-    "core:default"
+    "core:default",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "binaries/viban-server",
+          "sidecar": true,
+          "args": [
+            "--port",
+            { "validator": "\\d+" },
+            "--workspace",
+            { "validator": ".+" }
+          ]
+        }
+      ]
+    }
   ]
 }

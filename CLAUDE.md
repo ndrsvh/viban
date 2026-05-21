@@ -1,6 +1,4 @@
-# Conductor — Project Specification
-
-> Working name. Rename anywhere in this doc once you pick a final one.
+# viban — Project Specification
 
 ## What this is
 
@@ -55,15 +53,15 @@ Three-tier, structured as client/server from day 1 even when running locally. Th
                     │ SSH:    tunneled through ssh
                     ▼
 ┌──────────────────────────────────────────────┐
-│  conductor-server (separate binary)          │
+│  viban-server (separate binary)          │
 │  WebSocket listener + JSON-RPC router        │
 │  Spawns claude subprocesses                  │
 │  Git operations (shell out)                  │
 │  SQLite (rusqlite bundled)                   │
 │  File watching                               │
-│  Depends on: conductor-core                  │
+│  Depends on: viban-core                  │
 ├──────────────────────────────────────────────┤
-│  conductor-core (library crate)              │
+│  viban-core (library crate)              │
 │  Domain types (Task, Session, AgentEvent...) │
 │  Business logic, transport-agnostic          │
 │  NO Tauri, NO WebSocket, NO net code         │
@@ -71,9 +69,9 @@ Three-tier, structured as client/server from day 1 even when running locally. Th
 ```
 
 Rules:
-- **conductor-core** is a pure library. Knows nothing about Tauri, transport, or being remote. Testable standalone with `cargo test -p conductor-core`.
-- **conductor-server** is a standalone binary. Runs independently: `conductor-server --port 7400 --workspace /path`. This is what ships into WSL or onto a remote host in Phase 6+.
-- **src-tauri** is the UI host. Spawns conductor-server as a sidecar in local mode, connects to a remote conductor-server in remote mode. Same protocol both ways.
+- **viban-core** is a pure library. Knows nothing about Tauri, transport, or being remote. Testable standalone with `cargo test -p viban-core`.
+- **viban-server** is a standalone binary. Runs independently: `viban-server --port 7400 --workspace /path`. This is what ships into WSL or onto a remote host in Phase 6+.
+- **src-tauri** is the UI host. Spawns viban-server as a sidecar in local mode, connects to a remote viban-server in remote mode. Same protocol both ways.
 - For high-frequency streams (agent stdout → UI), the server emits JSON-RPC notifications. src-tauri forwards them through `tauri::ipc::Channel<T>` to the React side.
 - Errors at the WebSocket boundary serialize as JSON-RPC error objects. Errors at the Tauri command boundary serialize as `String` (Tauri requirement).
 
@@ -103,7 +101,7 @@ Long-running operations (agent runs, file watch) emit JSON-RPC notifications key
 On Tauri shell startup:
 1. Generate a 32-byte random auth token
 2. Pick a free port (bind `127.0.0.1:0`, read assigned port) OR let server pick with `--port 0`
-3. Spawn `conductor-server` as Tauri sidecar with `--port <n> --workspace <path>` and env `CONDUCTOR_AUTH_TOKEN=<token>`
+3. Spawn `viban-server` as Tauri sidecar with `--port <n> --workspace <path>` and env `VIBAN_AUTH_TOKEN=<token>`
 4. Wait for server to print `{"ready":true,"port":<n>}` on first stdout line
 5. Open WebSocket to `127.0.0.1:<n>`, send token as first message, server validates
 
@@ -117,10 +115,10 @@ Remote mode (Phase 6+): same token over the secure transport (WSL is trusted loc
 Cargo workspace at the root with three Rust crates plus the Tauri shell. The frontend lives in `src/` as usual.
 
 ```
-conductor/
+viban/
 ├── Cargo.toml                         # workspace manifest
 ├── crates/
-│   ├── conductor-core/                # pure logic library — no Tauri, no transport
+│   ├── viban-core/                # pure logic library — no Tauri, no transport
 │   │   ├── src/
 │   │   │   ├── lib.rs
 │   │   │   ├── types.rs               # Task, Session, AgentEvent, Board, ...
@@ -138,7 +136,7 @@ conductor/
 │   │   │       ├── schema.rs
 │   │   │       └── migrations.rs
 │   │   └── Cargo.toml
-│   └── conductor-server/              # binary: exposes core over JSON-RPC/WebSocket
+│   └── viban-server/              # binary: exposes core over JSON-RPC/WebSocket
 │       ├── src/
 │       │   ├── main.rs                # entry: arg parsing, start server, print ready
 │       │   ├── rpc.rs                 # JSON-RPC method routing
@@ -149,7 +147,7 @@ conductor/
 │   ├── src/
 │   │   ├── main.rs
 │   │   ├── lib.rs
-│   │   ├── sidecar.rs                 # spawn/manage conductor-server
+│   │   ├── sidecar.rs                 # spawn/manage viban-server
 │   │   ├── client.rs                  # JSON-RPC client over WebSocket
 │   │   └── commands/                  # thin proxies, NO business logic
 │   │       ├── mod.rs
@@ -157,10 +155,10 @@ conductor/
 │   │       ├── tasks.rs
 │   │       ├── sessions.rs
 │   │       └── git.rs
-│   ├── binaries/                      # built conductor-server lands here
-│   │   └── conductor-server-<target-triple>{.exe}
+│   ├── binaries/                      # built viban-server lands here
+│   │   └── viban-server-<target-triple>{.exe}
 │   ├── Cargo.toml
-│   └── tauri.conf.json                # externalBin: ["binaries/conductor-server"]
+│   └── tauri.conf.json                # externalBin: ["binaries/viban-server"]
 ├── src/                               # React frontend (same as before)
 │   ├── main.tsx
 │   ├── App.tsx
@@ -172,7 +170,7 @@ conductor/
 │   ├── hooks/
 │   ├── lib/
 │   │   └── utils.ts                   # cn() helper
-│   └── types/                         # mirrors of conductor-core types
+│   └── types/                         # mirrors of viban-core types
 ├── docs/
 │   └── decisions/                     # ADRs
 ├── .github/workflows/
@@ -183,9 +181,9 @@ conductor/
 ```
 
 Dependency graph (enforced by Cargo.toml):
-- `conductor-core` → no internal deps
-- `conductor-server` → `conductor-core`
-- `src-tauri` → `conductor-core` (for types only) — does NOT depend on `conductor-server` (it's a client)
+- `viban-core` → no internal deps
+- `viban-server` → `viban-core`
+- `src-tauri` → `viban-core` (for types only) — does NOT depend on `viban-server` (it's a client)
 
 ## Claude Code CLI integration
 
@@ -276,23 +274,24 @@ Do these in order. Do not jump ahead. Each phase ends in a working, committable 
 **Goal**: open the app, type a prompt, see the streaming response from Claude Code in a chat view.
 
 - [ ] `npm create tauri-app@latest` with React-TS + Vite template
-- [ ] Restructure into Cargo workspace: create `crates/conductor-core` and `crates/conductor-server`, make `src-tauri` a workspace member. Update root `Cargo.toml` with `[workspace]` and members list.
+- [ ] Restructure into Cargo workspace: create `crates/viban-core` and `crates/viban-server`, make `src-tauri` a workspace member. Update root `Cargo.toml` with `[workspace]` and members list.
 - [ ] Configure Tailwind CSS (flat config, no fancy plugins)
 - [ ] Initialize shadcn/ui: `npx shadcn@latest init` (choose: TypeScript, Tailwind, CSS variables for theming, `@/` alias)
 - [ ] Install initial shadcn components for Phase 1: `button`, `input`, `textarea`, `scroll-area`, `dialog`, `dropdown-menu`, `tooltip`, `separator`, `card`
-- [ ] GitHub Actions CI matrix: `macos-latest`, `ubuntu-22.04`, `windows-latest`. CI builds `conductor-server` first with proper target-triple suffix, copies into `src-tauri/binaries/`, then runs `cargo tauri build`.
-- [ ] `conductor-core`: `AgentEvent` enum, `Session` struct, `spawn_claude(workspace, opts)` function using `tokio::process`, NDJSON parser. Pure logic, no Tauri.
-- [ ] `conductor-server`: WebSocket listener via `tokio-tungstenite`, JSON-RPC router (consider `jsonrpsee` or hand-rolled — start simple). Methods: `agents.spawn`. Notification: `events.update`. CLI args: `--port`, `--workspace`. Auth via `CONDUCTOR_AUTH_TOKEN` env.
-- [ ] `conductor-server`: on startup, print `{"ready":true,"port":<n>}` to stdout as the first line, then continue logging via `tracing` to stderr.
-- [ ] `src-tauri`: register `conductor-server` as `externalBin` in `tauri.conf.json`. Add capability for sidecar shell exec.
+- [ ] GitHub Actions CI matrix: `macos-latest`, `ubuntu-22.04`, `windows-latest`. CI builds `viban-server` first with proper target-triple suffix, copies into `src-tauri/binaries/`, then runs `cargo tauri build`.
+- [ ] `viban-core`: `AgentEvent` enum, `Session` struct, `spawn_claude(workspace, opts)` function using `tokio::process`, NDJSON parser. Pure logic, no Tauri.
+- [ ] `viban-server`: WebSocket listener via `tokio-tungstenite`, JSON-RPC router (consider `jsonrpsee` or hand-rolled — start simple). Methods: `agents.spawn`. Notification: `events.update`. CLI args: `--port`, `--workspace`. Auth via `VIBAN_AUTH_TOKEN` env.
+- [ ] `viban-server`: on startup, print `{"ready":true,"port":<n>}` to stdout as the first line, then continue logging via `tracing` to stderr.
+- [ ] `src-tauri`: register `viban-server` as `externalBin` in `tauri.conf.json`. Add capability for sidecar shell exec.
 - [ ] `src-tauri`: on `setup()`, generate auth token, spawn sidecar, wait for ready line, open WebSocket, store the JSON-RPC client in app state.
 - [ ] `src-tauri`: `#[tauri::command] spawn_session(...)` — thin proxy that calls `agents.spawn` over WebSocket, returns `subscription_id`. Stream `events.update` notifications through `Channel<AgentEvent>` to the frontend.
+- [ ] Frontend: server connection status line (connecting / ok / error) backed by a `server.health` JSON-RPC round-trip — proves the sidecar pipe end to end before the chat UI exists
 - [ ] Frontend: minimal chat view (textarea + scrolling message list) using shadcn `ScrollArea` + `Textarea` + `Button`
 - [ ] Frontend: receive `Channel<AgentEvent>`, render assistant text incrementally
-- [ ] Handle subprocess deaths: if claude dies, surface error; if conductor-server dies, attempt restart with backoff, surface state in UI
+- [ ] Handle subprocess deaths: if claude dies, surface error; if viban-server dies, attempt restart with backoff, surface state in UI
 - [ ] Smoke test on all three OSes locally before pushing
 
-**Done when**: CI green on all 3 OSes. User can launch the app, send "hello", see streaming response. conductor-server starts and stops cleanly with the Tauri shell. Force-killing conductor-server while the app is running results in graceful UI degradation + restart attempt, not a crash.
+**Done when**: CI green on all 3 OSes. User can launch the app, send "hello", see streaming response. viban-server starts and stops cleanly with the Tauri shell. Force-killing viban-server while the app is running results in graceful UI degradation + restart attempt, not a crash.
 
 ### Phase 2 — Session persistence
 
@@ -333,7 +332,7 @@ Do these in order. Do not jump ahead. Each phase ends in a working, committable 
 
 - [ ] On board creation: user picks a git repo as the project root
 - [ ] On "start session" for a task:
-  - run `git worktree add .conductor/worktrees/<task-id> -b conductor/<task-slug>`
+  - run `git worktree add .viban/worktrees/<task-id> -b viban/<task-slug>`
   - spawn `claude` with `current_dir` = worktree path
 - [ ] On task moved to Done: optional "merge & cleanup" — merge branch into base, then `git worktree remove`
 - [ ] On task cancelled / deleted: `git worktree remove --force` + delete branch
@@ -360,34 +359,34 @@ Do these in order. Do not jump ahead. Each phase ends in a working, committable 
 
 - [ ] UI: "Open in WSL" action in the project picker. List distros via `wsl.exe -l -q --running`, plus an option to start a stopped one.
 - [ ] WSL filesystem picker: browse `\\wsl$\<distro>\...` from Windows for selecting the workspace path. Convert to POSIX path before sending to server.
-- [ ] Server installation in distro: check for `conductor-server` on PATH inside the distro. If missing, offer two paths to the user:
-  - install via `cargo install conductor-server` (requires Rust toolchain in distro)
+- [ ] Server installation in distro: check for `viban-server` on PATH inside the distro. If missing, offer two paths to the user:
+  - install via `cargo install viban-server` (requires Rust toolchain in distro)
   - download a pre-built static Linux binary from project releases and copy into `~/.local/bin` in the distro
-- [ ] Spawn: `wsl.exe -d <distro> --cd <workspace> -- conductor-server --port 0 --workspace .`
+- [ ] Spawn: `wsl.exe -d <distro> --cd <workspace> -- viban-server --port 0 --workspace .`
 - [ ] Parse `{"ready":true,"port":<n>}` from stdout, connect WebSocket to `localhost:<n>` (Windows side — WSL2 forwards automatically)
 - [ ] Same auth token flow as local mode (token passed via env)
 - [ ] UI badge showing "Remote: WSL/<distro>" in the workspace header so the user always knows where the code is running
 - [ ] Path normalization: agent operations may return POSIX paths from the server; the UI must display them correctly but never try to access them directly from Windows
 - [ ] Handle WSL distro stop / suspend: reconnect with exponential backoff, show "reconnecting" state, allow manual retry
-- [ ] git worktrees are created inside WSL filesystem (`/home/<user>/.conductor/worktrees/<task-id>`), NOT under `\\wsl$` mount from Windows — performance is dramatically better when git operations stay within the WSL filesystem
+- [ ] git worktrees are created inside WSL filesystem (`/home/<user>/.viban/worktrees/<task-id>`), NOT under `\\wsl$` mount from Windows — performance is dramatically better when git operations stay within the WSL filesystem
 
 **Done when**: a project in WSL behaves identically to a local project. Tasks run, agents spawn, diffs render, git commits land on the WSL filesystem. Killing the distro and restarting it recovers cleanly.
 
 ### Phase 7+ — additional remote transports (post-MVP, not specified here)
 
 Designed-for but out of scope for this doc:
-- SSH remote (`ssh user@host conductor-server --port 0 ...`, tunnel port back)
+- SSH remote (`ssh user@host viban-server --port 0 ...`, tunnel port back)
 - Dev containers (docker exec into a running container)
 - Cloud dev environments (Coder, Gitpod-style)
 
-All these share the same `conductor-server` binary and JSON-RPC protocol. Only the spawn/connect strategy differs per transport. Each gets its own ADR before implementation.
+All these share the same `viban-server` binary and JSON-RPC protocol. Only the spawn/connect strategy differs per transport. Each gets its own ADR before implementation.
 
 ## Coding conventions
 
 ### Rust
 
-- **Crate boundaries are sacred.** `conductor-core` must never import `tauri`, `tokio-tungstenite`, or anything transport-related. `conductor-server` is the only place WebSocket and JSON-RPC live. `src-tauri` is the only place Tauri lives. If you find yourself wanting to import the wrong thing into the wrong crate, the abstraction is wrong — fix the abstraction, don't smuggle the import.
-- **Wire types live in conductor-core.** Domain types (`Task`, `Session`, `AgentEvent`, etc.) carry `Serialize + Deserialize` derives from day 1, even though `conductor-core` doesn't itself do serialization. This avoids parallel type hierarchies in the protocol layer.
+- **Crate boundaries are sacred.** `viban-core` must never import `tauri`, `tokio-tungstenite`, or anything transport-related. `viban-server` is the only place WebSocket and JSON-RPC live. `src-tauri` is the only place Tauri lives. If you find yourself wanting to import the wrong thing into the wrong crate, the abstraction is wrong — fix the abstraction, don't smuggle the import.
+- **Wire types live in viban-core.** Domain types (`Task`, `Session`, `AgentEvent`, etc.) carry `Serialize + Deserialize` derives from day 1, even though `viban-core` doesn't itself do serialization. This avoids parallel type hierarchies in the protocol layer.
 - Errors: `anyhow::Result` internally, convert to `String` at every `#[tauri::command]` boundary
 - Async: every command is `async fn`. Never `block_on` inside a command.
 - Locks: `tokio::sync::{Mutex, RwLock}`. Never `std::sync` in async code paths.
@@ -430,9 +429,9 @@ Things that have bitten people building similar apps. Actively guard against the
 
 ## Strict don't-do list
 
-- ❌ Do NOT put business logic in `src-tauri` commands. They are PROXIES — they receive `invoke()`, forward to `conductor-server` via JSON-RPC, return the result. Anything with a `match` on domain types, a database query, or a subprocess call belongs in `conductor-core` and is reached via the server.
-- ❌ Do NOT import `tauri` anywhere in `conductor-core` or `conductor-server`. Cargo.toml of those crates must not list it as a dependency. Enforce in CI by checking with `cargo tree`.
-- ❌ Do NOT bypass the JSON-RPC layer with direct function calls from `src-tauri` to `conductor-core` (even though they're in the same workspace and could technically). The boundary is the whole point — collapsing it means Phase 6 won't work.
+- ❌ Do NOT put business logic in `src-tauri` commands. They are PROXIES — they receive `invoke()`, forward to `viban-server` via JSON-RPC, return the result. Anything with a `match` on domain types, a database query, or a subprocess call belongs in `viban-core` and is reached via the server.
+- ❌ Do NOT import `tauri` anywhere in `viban-core` or `viban-server`. Cargo.toml of those crates must not list it as a dependency. Enforce in CI by checking with `cargo tree`.
+- ❌ Do NOT bypass the JSON-RPC layer with direct function calls from `src-tauri` to `viban-core` (even though they're in the same workspace and could technically). The boundary is the whole point — collapsing it means Phase 6 won't work.
 - ❌ Do NOT switch frameworks (no Electron, no Flutter, no GPUI). Decision is final until an ADR says otherwise.
 - ❌ Do NOT use Monaco. CodeMirror 6 only.
 - ❌ Do NOT add a second component library (Tamagui, MUI, Chakra, Mantine, NativeBase). shadcn/ui is the only one. If a needed component is missing, build it on top of Radix Primitives following the shadcn pattern.

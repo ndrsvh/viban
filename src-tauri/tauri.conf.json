@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeDevCommand": "npm run build:sidecar && npm run dev",
+    "beforeBuildCommand": "npm run build:sidecar -- --release && npm run build"
   },
   "app": {
     "windows": [
@@ -26,6 +26,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": ["binaries/viban-server"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
