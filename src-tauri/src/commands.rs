@@ -18,34 +18,16 @@ pub async fn server_health(state: State<'_, AppState>) -> Result<Value, String> 
         .map_err(|err| err.to_string())
 }
 
-/// Spawns a Claude Code session for `prompt`, streaming its events to
-/// `on_event`. Returns the new session id for follow-up messages.
+/// Subscribes `on_event` to a session's agent events. Call this when a chat
+/// view opens, before spawning or sending, so no event is missed.
 #[tauri::command]
-pub async fn spawn_session(
-    prompt: String,
+pub async fn open_session(
+    session_id: String,
     on_event: Channel<AgentEvent>,
     state: State<'_, AppState>,
-) -> Result<String, String> {
+) -> Result<(), String> {
     let client = state.client().await.ok_or("server not connected")?;
-    let subscription_id = new_id();
-
-    // Subscribe before spawning so no early event is missed.
-    let mut events = client.subscribe(&subscription_id).await;
-    let response = client
-        .call(
-            "agents.spawn",
-            json!({ "prompt": prompt, "subscription_id": subscription_id }),
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-
-    let session_id = response
-        .get("session_id")
-        .and_then(Value::as_str)
-        .ok_or("server did not return a session id")?
-        .to_string();
-
-    // Forward agent events to the frontend channel until the session ends.
+    let mut events = client.subscribe(&session_id).await;
     tauri::async_runtime::spawn(async move {
         while let Some(value) = events.recv().await {
             match serde_json::from_value::<AgentEvent>(value) {
@@ -58,11 +40,37 @@ pub async fn spawn_session(
             }
         }
     });
-
-    Ok(session_id)
+    Ok(())
 }
 
-/// Sends a follow-up message to a running session.
+/// Stops forwarding a session's events (the agent keeps running server-side).
+#[tauri::command]
+pub async fn close_session(session_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    if let Some(client) = state.client().await {
+        client.unsubscribe(&session_id).await;
+    }
+    Ok(())
+}
+
+/// Spawns a brand-new Claude Code session for `prompt`.
+#[tauri::command]
+pub async fn spawn_session(
+    session_id: String,
+    prompt: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let client = state.client().await.ok_or("server not connected")?;
+    client
+        .call(
+            "agents.spawn",
+            json!({ "session_id": session_id, "prompt": prompt }),
+        )
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+/// Sends a follow-up message to an existing session (resumed if necessary).
 #[tauri::command]
 pub async fn send_message(
     session_id: String,
@@ -80,15 +88,22 @@ pub async fn send_message(
     Ok(())
 }
 
-/// A short random hex id for an event subscription.
-fn new_id() -> String {
-    use std::fmt::Write as _;
+/// Lists every persisted session (`{ "sessions": [...] }`).
+#[tauri::command]
+pub async fn list_sessions(state: State<'_, AppState>) -> Result<Value, String> {
+    let client = state.client().await.ok_or("server not connected")?;
+    client
+        .call("sessions.list", Value::Null)
+        .await
+        .map_err(|err| err.to_string())
+}
 
-    let mut bytes = [0u8; 8];
-    getrandom::fill(&mut bytes).expect("OS RNG must be available");
-    let mut id = String::with_capacity(16);
-    for byte in bytes {
-        let _ = write!(id, "{byte:02x}");
-    }
-    id
+/// Loads a session and its history (`{ "session": ..., "messages": [...] }`).
+#[tauri::command]
+pub async fn get_session(session_id: String, state: State<'_, AppState>) -> Result<Value, String> {
+    let client = state.client().await.ok_or("server not connected")?;
+    client
+        .call("sessions.get", json!({ "session_id": session_id }))
+        .await
+        .map_err(|err| err.to_string())
 }

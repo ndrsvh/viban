@@ -51,8 +51,12 @@ pub fn run() {
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             commands::server_health,
+            commands::open_session,
+            commands::close_session,
             commands::spawn_session,
-            commands::send_message
+            commands::send_message,
+            commands::list_sessions,
+            commands::get_session
         ])
         .setup(|app| {
             let handle = app.handle().clone();
