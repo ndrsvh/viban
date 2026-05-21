@@ -44,3 +44,6 @@ ehthumbs.db
 # Logs
 *.log
 logs/
+
+# viban project-local state (sqlite db, worktrees)
+.viban/

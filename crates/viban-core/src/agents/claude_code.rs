@@ -62,20 +62,27 @@ impl ClaudeSession {
 
 /// Spawns `claude` in `workspace`, returning a control handle and the stream
 /// of parsed events. The event stream ends when the process exits.
+///
+/// When `resume` is `Some(claude_session_id)`, the agent reattaches to that
+/// existing Claude Code session via `--resume`.
 pub fn spawn_claude(
     workspace: &Path,
+    resume: Option<&str>,
 ) -> Result<(ClaudeSession, mpsc::UnboundedReceiver<AgentEvent>)> {
     let mut command = base_command();
+    command.args([
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--permission-mode",
+        "acceptEdits",
+    ]);
+    if let Some(claude_session_id) = resume {
+        command.args(["--resume", claude_session_id]);
+    }
     command
-        .args([
-            "--input-format",
-            "stream-json",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--permission-mode",
-            "acceptEdits",
-        ])
         .current_dir(workspace)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

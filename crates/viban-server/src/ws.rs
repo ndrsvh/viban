@@ -12,13 +12,14 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::tungstenite::Message;
+use viban_core::db::Db;
 
 use crate::auth;
 use crate::rpc::{self, SessionRegistry};
 
 /// Accept loop. Each connection is handled on its own task.
-pub async fn serve(listener: TcpListener, token: String, workspace: PathBuf) -> Result<()> {
-    let ctx = Arc::new(rpc::Context { workspace });
+pub async fn serve(listener: TcpListener, token: String, workspace: PathBuf, db: Db) -> Result<()> {
+    let ctx = Arc::new(rpc::Context { workspace, db });
     let token = Arc::new(token);
 
     loop {

@@ -13,7 +13,9 @@ use tokio_rusqlite::Connection;
 
 use crate::types::{Message, Session};
 
-/// The viban session/message store.
+/// The viban session/message store. Cheap to clone — the inner connection
+/// handle is shared, so background tasks can hold their own copy.
+#[derive(Clone)]
 pub struct Db {
     conn: Connection,
 }
