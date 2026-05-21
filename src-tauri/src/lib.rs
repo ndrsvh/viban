@@ -41,7 +41,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(AppState::default())
-        .invoke_handler(tauri::generate_handler![commands::server_health])
+        .invoke_handler(tauri::generate_handler![
+            commands::server_health,
+            commands::spawn_session,
+            commands::send_message
+        ])
         .setup(|app| {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {

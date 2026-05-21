@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
+import { ChatView } from "@/components/chat-view";
 import type { ServerHealth } from "@/types/server";
 
 type Status =
   | { state: "connecting" }
-  | { state: "ok"; health: ServerHealth }
+  | { state: "ready" }
   | { state: "error"; message: string };
 
 // The sidecar handshake runs asynchronously after the window opens, so the
@@ -21,8 +22,8 @@ export default function App() {
 
     const attempt = async (n: number): Promise<void> => {
       try {
-        const health = await invoke<ServerHealth>("server_health");
-        if (!cancelled) setStatus({ state: "ok", health });
+        await invoke<ServerHealth>("server_health");
+        if (!cancelled) setStatus({ state: "ready" });
       } catch (err) {
         if (cancelled) return;
         if (n + 1 >= MAX_ATTEMPTS) {
@@ -39,21 +40,18 @@ export default function App() {
     };
   }, []);
 
+  if (status.state === "ready") {
+    return <ChatView />;
+  }
+
   return (
     <main className="flex h-screen w-screen flex-col items-center justify-center gap-2 bg-background text-foreground">
       <h1 className="text-2xl font-medium tracking-tight">viban</h1>
-      <p className="text-sm text-muted-foreground">{describe(status)}</p>
+      <p className="text-sm text-muted-foreground">
+        {status.state === "connecting"
+          ? "server: connecting…"
+          : `server: error · ${status.message}`}
+      </p>
     </main>
   );
-}
-
-function describe(status: Status): string {
-  switch (status.state) {
-    case "connecting":
-      return "server: connecting…";
-    case "ok":
-      return `server: ok · v${status.health.version}`;
-    case "error":
-      return `server: error · ${status.message}`;
-  }
 }
