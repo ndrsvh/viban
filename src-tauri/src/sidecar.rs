@@ -7,12 +7,14 @@ use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use tokio::sync::oneshot;
 
-/// A successfully launched sidecar: its bound port, the shared auth token, and
-/// the process handle (kept so the shell can kill it on exit).
+/// A successfully launched sidecar: its bound port, the shared auth token, the
+/// process handle (kept for kill-on-exit), and a signal that resolves once the
+/// process dies.
 pub struct Sidecar {
     pub port: u16,
     pub token: String,
     pub child: CommandChild,
+    pub exited: oneshot::Receiver<()>,
 }
 
 #[derive(Deserialize)]
@@ -37,6 +39,7 @@ pub async fn spawn(app: &AppHandle, workspace: &str) -> Result<Sidecar> {
 
     let (ready_tx, ready_rx) = oneshot::channel::<Result<u16>>();
     let mut ready_tx = Some(ready_tx);
+    let (exit_tx, exit_rx) = oneshot::channel::<()>();
 
     tauri::async_runtime::spawn(async move {
         while let Some(event) = rx.recv().await {
@@ -73,13 +76,19 @@ pub async fn spawn(app: &AppHandle, workspace: &str) -> Result<Sidecar> {
                 _ => {}
             }
         }
+        let _ = exit_tx.send(());
     });
 
     let port = ready_rx
         .await
         .context("viban-server ready channel dropped")??;
 
-    Ok(Sidecar { port, token, child })
+    Ok(Sidecar {
+        port,
+        token,
+        child,
+        exited: exit_rx,
+    })
 }
 
 fn parse_ready(line: &str) -> Result<u16> {

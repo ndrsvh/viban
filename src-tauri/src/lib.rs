@@ -7,19 +7,23 @@ mod client;
 mod commands;
 mod sidecar;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
-use tauri::{Manager, RunEvent};
+use tauri::{AppHandle, Manager, RunEvent};
 use tauri_plugin_shell::process::CommandChild;
-use tokio::sync::Mutex;
+use tokio::sync::{oneshot, Mutex};
 
 use client::Client;
 
-/// Shared application state: the JSON-RPC client and the sidecar handle.
+/// Shared application state: the JSON-RPC client, the sidecar handle, and a
+/// flag that tells the supervisor to stop restarting once the app is exiting.
 #[derive(Default)]
 pub struct AppState {
     client: Mutex<Option<Arc<Client>>>,
     sidecar: Mutex<Option<CommandChild>>,
+    shutting_down: AtomicBool,
 }
 
 impl AppState {
@@ -28,6 +32,10 @@ impl AppState {
         self.client.lock().await.clone()
     }
 }
+
+/// Backoff bounds for sidecar restarts.
+const INITIAL_BACKOFF: Duration = Duration::from_millis(500);
+const MAX_BACKOFF: Duration = Duration::from_secs(30);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -48,17 +56,16 @@ pub fn run() {
         ])
         .setup(|app| {
             let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(err) = connect_sidecar(handle).await {
-                    tracing::error!(%err, "failed to start viban-server");
-                }
-            });
+            tauri::async_runtime::spawn(supervise_sidecar(handle));
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building viban")
         .run(|app, event| {
             if let RunEvent::ExitRequested { .. } = event {
+                app.state::<AppState>()
+                    .shutting_down
+                    .store(true, Ordering::Relaxed);
                 let child = app
                     .state::<AppState>()
                     .sidecar
@@ -74,20 +81,62 @@ pub fn run() {
         });
 }
 
-/// Spawns viban-server, connects the JSON-RPC client, and publishes both into
-/// shared state. The sidecar handle is stored before connecting so it is
-/// always reachable for kill-on-exit.
-async fn connect_sidecar(app: tauri::AppHandle) -> anyhow::Result<()> {
-    let workspace = std::env::current_dir()?.to_string_lossy().into_owned();
+/// Keeps a `viban-server` running: connects, waits for it to die, and restarts
+/// it with exponential backoff until the app shuts down.
+async fn supervise_sidecar(app: AppHandle) {
+    let workspace = match std::env::current_dir() {
+        Ok(dir) => dir.to_string_lossy().into_owned(),
+        Err(err) => {
+            tracing::error!(%err, "cannot determine workspace directory");
+            return;
+        }
+    };
 
-    let sidecar = sidecar::spawn(&app, &workspace).await?;
+    let mut backoff = INITIAL_BACKOFF;
+    loop {
+        if app
+            .state::<AppState>()
+            .shutting_down
+            .load(Ordering::Relaxed)
+        {
+            return;
+        }
+
+        match start_sidecar(&app, &workspace).await {
+            Ok(exited) => {
+                backoff = INITIAL_BACKOFF;
+                // Block until the sidecar process dies.
+                let _ = exited.await;
+                tracing::warn!("viban-server connection lost");
+                *app.state::<AppState>().client.lock().await = None;
+            }
+            Err(err) => tracing::error!(%err, "failed to start viban-server"),
+        }
+
+        if app
+            .state::<AppState>()
+            .shutting_down
+            .load(Ordering::Relaxed)
+        {
+            return;
+        }
+        tokio::time::sleep(backoff).await;
+        backoff = (backoff * 2).min(MAX_BACKOFF);
+    }
+}
+
+/// Spawns viban-server, connects the JSON-RPC client, and publishes both into
+/// shared state. Returns a signal that resolves when the sidecar dies.
+async fn start_sidecar(app: &AppHandle, workspace: &str) -> anyhow::Result<oneshot::Receiver<()>> {
+    let sidecar = sidecar::spawn(app, workspace).await?;
     let port = sidecar.port;
-    let state = app.state::<AppState>();
-    *state.sidecar.lock().await = Some(sidecar.child);
-    tracing::info!(port, "viban-server ready");
+
+    // Store the handle before connecting so it is always reachable for
+    // kill-on-exit.
+    *app.state::<AppState>().sidecar.lock().await = Some(sidecar.child);
 
     let client = Client::connect(port, &sidecar.token).await?;
-    *state.client.lock().await = Some(Arc::new(client));
-    tracing::info!("connected to viban-server");
-    Ok(())
+    *app.state::<AppState>().client.lock().await = Some(Arc::new(client));
+    tracing::info!(port, "connected to viban-server");
+    Ok(sidecar.exited)
 }
