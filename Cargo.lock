@@ -4130,6 +4130,8 @@ dependencies = [
  "anyhow",
  "serde",
  "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

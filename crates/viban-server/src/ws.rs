@@ -1,6 +1,8 @@
-//! WebSocket transport: accepts connections, runs the auth handshake, then
-//! serves JSON-RPC requests for the lifetime of each connection.
+//! WebSocket transport: accepts the connection, runs the auth handshake, then
+//! serves JSON-RPC — multiplexing request responses and agent event
+//! notifications onto a single outbound queue feeding the write half.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -8,12 +10,13 @@ use std::sync::Arc;
 use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::{auth, rpc};
+use crate::auth;
+use crate::rpc::{self, SessionRegistry};
 
-/// Accept loop. Each connection is handled on its own task and never brings
-/// the listener down.
+/// Accept loop. Each connection is handled on its own task.
 pub async fn serve(listener: TcpListener, token: String, workspace: PathBuf) -> Result<()> {
     let ctx = Arc::new(rpc::Context { workspace });
     let token = Arc::new(token);
@@ -52,16 +55,45 @@ async fn handle_connection(
     }
     tracing::debug!(%peer, "authenticated");
 
-    while let Some(msg) = ws.next().await {
-        match msg? {
-            Message::Text(text) => {
-                let response = rpc::handle(text.as_str(), ctx);
-                ws.send(Message::text(response)).await?;
+    let (mut sink, mut incoming) = ws.split();
+    let (outbound, mut outbound_rx) = mpsc::unbounded_channel::<String>();
+
+    // One task owns the write half; responses and notifications share it.
+    tokio::spawn(async move {
+        while let Some(text) = outbound_rx.recv().await {
+            if sink.send(Message::text(text)).await.is_err() {
+                break;
             }
-            Message::Ping(payload) => ws.send(Message::Pong(payload)).await?,
-            Message::Close(_) => break,
-            _ => {}
+        }
+    });
+
+    let registry: SessionRegistry = Arc::new(Mutex::new(HashMap::new()));
+
+    while let Some(message) = incoming.next().await {
+        match message {
+            Ok(Message::Text(text)) => {
+                let response = rpc::handle(text.as_str(), ctx, &registry, &outbound).await;
+                if outbound.send(response).is_err() {
+                    break;
+                }
+            }
+            Ok(Message::Close(_)) | Err(_) => break,
+            Ok(_) => {}
         }
     }
-    Ok(())
+
+    // The UI client is gone. Kill every agent so no `claude` process is
+    // orphaned, then exit — in local mode the server's lifetime equals the
+    // client's.
+    tracing::info!(%peer, "client disconnected, shutting down");
+    let sessions: Vec<_> = registry
+        .lock()
+        .await
+        .drain()
+        .map(|(_, session)| session)
+        .collect();
+    for mut session in sessions {
+        session.kill().await;
+    }
+    std::process::exit(0)
 }
