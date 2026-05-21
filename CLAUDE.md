@@ -285,6 +285,7 @@ Do these in order. Do not jump ahead. Each phase ends in a working, committable 
 - [ ] `src-tauri`: register `viban-server` as `externalBin` in `tauri.conf.json`. Add capability for sidecar shell exec.
 - [ ] `src-tauri`: on `setup()`, generate auth token, spawn sidecar, wait for ready line, open WebSocket, store the JSON-RPC client in app state.
 - [ ] `src-tauri`: `#[tauri::command] spawn_session(...)` — thin proxy that calls `agents.spawn` over WebSocket, returns `subscription_id`. Stream `events.update` notifications through `Channel<AgentEvent>` to the frontend.
+- [ ] Frontend: server connection status line (connecting / ok / error) backed by a `server.health` JSON-RPC round-trip — proves the sidecar pipe end to end before the chat UI exists
 - [ ] Frontend: minimal chat view (textarea + scrolling message list) using shadcn `ScrollArea` + `Textarea` + `Button`
 - [ ] Frontend: receive `Channel<AgentEvent>`, render assistant text incrementally
 - [ ] Handle subprocess deaths: if claude dies, surface error; if viban-server dies, attempt restart with backoff, surface state in UI

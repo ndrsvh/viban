@@ -1,18 +1,64 @@
-//! viban-server stub. Real WebSocket + JSON-RPC listener lands in the next
-//! commit. For now this binary just identifies itself so that workspace
-//! builds produce all three crate outputs.
+//! viban-server: the standalone JSON-RPC/WebSocket backend for viban.
+//!
+//! Spawned as a sidecar by the Tauri shell in local mode, and run directly on
+//! a remote host in later phases. It owns no UI and no Tauri code.
 
-fn main() -> anyhow::Result<()> {
+mod auth;
+mod rpc;
+mod ws;
+
+use std::io::Write;
+use std::path::PathBuf;
+
+use anyhow::{Context, Result};
+use clap::Parser;
+
+/// Command-line arguments.
+#[derive(Debug, Parser)]
+#[command(name = "viban-server", version, about = "viban JSON-RPC server")]
+struct Args {
+    /// TCP port to bind on 127.0.0.1. `0` lets the OS pick a free port.
+    #[arg(long, default_value_t = 0)]
+    port: u16,
+
+    /// Filesystem path of the workspace this server operates on.
+    #[arg(long)]
+    workspace: PathBuf,
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let args = Args::parse();
+
+    // Logs go to stderr so the ready line on stdout stays machine-parseable.
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
 
-    tracing::info!(
-        version = viban_core::VERSION,
-        "viban-server stub: not yet implemented"
-    );
-    Ok(())
+    let token = std::env::var("VIBAN_AUTH_TOKEN")
+        .context("VIBAN_AUTH_TOKEN environment variable must be set")?;
+
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", args.port))
+        .await
+        .with_context(|| format!("failed to bind 127.0.0.1:{}", args.port))?;
+    let port = listener.local_addr()?.port();
+
+    // First stdout line: the bootstrap handshake the Tauri shell waits for.
+    {
+        let mut stdout = std::io::stdout().lock();
+        writeln!(
+            stdout,
+            "{}",
+            serde_json::json!({ "ready": true, "port": port })
+        )?;
+        stdout.flush()?;
+    }
+
+    tracing::info!(port, workspace = %args.workspace.display(), "viban-server listening");
+
+    ws::serve(listener, token, args.workspace).await
 }
