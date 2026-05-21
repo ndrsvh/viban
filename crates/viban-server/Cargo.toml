@@ -1,0 +1,15 @@
+[package]
+name = "viban-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "viban-server"
+path = "src/main.rs"
+
+[dependencies]
+viban-core = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
