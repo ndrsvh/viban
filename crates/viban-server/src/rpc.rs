@@ -137,6 +137,14 @@ async fn agents_spawn(
     let (mut session, mut events) = spawn_claude(&ctx.workspace)
         .map_err(|err| RpcError::internal(format!("failed to spawn agent: {err}")))?;
 
+    // Send the prompt before waiting for the init event: Claude Code does not
+    // emit its `system/init` line until it has received the first stdin
+    // message, so blocking on init first would deadlock.
+    session
+        .send_message(prompt)
+        .await
+        .map_err(|err| RpcError::internal(format!("failed to send prompt: {err}")))?;
+
     let session_id =
         match tokio::time::timeout(Duration::from_secs(30), wait_for_session_id(&mut events)).await
         {
@@ -147,11 +155,6 @@ async fn agents_spawn(
                 return Err(RpcError::internal("agent initialization timed out"));
             }
         };
-
-    session
-        .send_message(prompt)
-        .await
-        .map_err(|err| RpcError::internal(format!("failed to send prompt: {err}")))?;
 
     registry.lock().await.insert(session_id.clone(), session);
     spawn_event_pump(
