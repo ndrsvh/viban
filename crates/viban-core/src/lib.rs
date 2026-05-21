@@ -6,5 +6,13 @@
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod agents;
+pub mod db;
+pub mod types;
 
 pub use agents::AgentEvent;
+pub use types::{Message, Session};
+
+/// A fresh random identifier (UUID v4), used for session and message ids.
+pub fn new_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
