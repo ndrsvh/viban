@@ -4,7 +4,6 @@ import { EditorState } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 
 import { CheckpointBar } from "@/components/checkpoint-bar";
-import { RunPanel } from "@/components/run-panel";
 import { Button } from "@/components/ui/button";
 import { rpc } from "@/lib/rpc";
 import { cn } from "@/lib/utils";
@@ -110,9 +109,6 @@ export function DiffView({ task, onDone }: DiffViewProps) {
     <div className="flex h-full flex-col">
       <header className="flex items-center justify-between gap-2 border-b px-3 py-1.5">
         <div className="flex min-w-0 items-center gap-2">
-          <h1 className="truncate text-sm font-medium">
-            Review: {task.title}
-          </h1>
           {attempts.length > 1 && (
             <select
               value={activeAttemptId}
@@ -129,9 +125,6 @@ export function DiffView({ task, onDone }: DiffViewProps) {
           )}
         </div>
         <div className="flex shrink-0 gap-2">
-          <Button variant="ghost" size="sm" onClick={onDone}>
-            ← Board
-          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -202,8 +195,6 @@ export function DiffView({ task, onDone }: DiffViewProps) {
           )}
         </main>
       </div>
-
-      <RunPanel taskId={task.id} />
     </div>
   );
 }

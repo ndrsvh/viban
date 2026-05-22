@@ -9,7 +9,7 @@ import type { FileDiff } from "@/types/diff";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
-  // The run panel constructs an event Channel for command output.
+  // rpc.ts imports tauri's Channel at module load; the mock provides it.
   Channel: class {
     onmessage: ((message: unknown) => void) | null = null;
   },
@@ -73,7 +73,6 @@ describe("DiffView", () => {
 
     expect(await screen.findByText("src/a.txt")).toBeInTheDocument();
     expect(screen.getByText("src/b.txt")).toBeInTheDocument();
-    expect(screen.getByText("Review: My task")).toBeInTheDocument();
     expect(invokeMock).toHaveBeenCalledWith("git_diff", { taskId: "t1" });
   });
 
@@ -109,18 +108,6 @@ describe("DiffView", () => {
 
     expect(await screen.findByText("No changes.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Accept all" })).toBeDisabled();
-  });
-
-  it("returns to the board via the back button", async () => {
-    const user = userEvent.setup();
-    const onDone = vi.fn();
-    stub(sampleFiles);
-
-    render(<DiffView task={makeTask()} onDone={onDone} />);
-    await screen.findByText("src/a.txt");
-    await user.click(screen.getByRole("button", { name: "← Board" }));
-
-    expect(onDone).toHaveBeenCalled();
   });
 
   it("switches the reviewed attempt", async () => {

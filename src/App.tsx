@@ -3,8 +3,7 @@ import { Channel } from "@tauri-apps/api/core";
 
 import { AppShell, type ServerStatus } from "@/components/app-shell";
 import { BoardView } from "@/components/board-view";
-import { ChatView } from "@/components/chat-view";
-import { DiffView } from "@/components/diff-view";
+import { TaskDetail } from "@/components/task-detail";
 import { TaskListPanel } from "@/components/task-list-panel";
 import { Button } from "@/components/ui/button";
 import { rpc } from "@/lib/rpc";
@@ -22,6 +21,15 @@ export default function App() {
   const [activeSession, setActiveSession] = useState<string | null>(null);
   const [reviewTask, setReviewTask] = useState<Task | null>(null);
   const [projectError, setProjectError] = useState<string | null>(null);
+
+  // The task whose session is open in the chat, resolved from the board store.
+  const taskForSession = useBoardStore((state) =>
+    activeSession
+      ? (Object.values(state.tasks).find(
+          (task) => task.session_id === activeSession,
+        ) ?? null)
+      : null,
+  );
 
   useEffect(() => {
     void rpc
@@ -130,8 +138,8 @@ export default function App() {
   }
 
   // A project is open: the persistent shell hosts every view. The work area
-  // swaps between the board, a session chat, and a diff review; the rail,
-  // task-list panel, and status bar stay mounted (ADR-0004).
+  // swaps between the board and a task detail; the rail, task-list panel, and
+  // status bar stay mounted (ADR-0004).
   const goBoard = () => {
     setActiveSession(null);
     setReviewTask(null);
@@ -141,6 +149,10 @@ export default function App() {
     setReviewTask(null);
     setActiveSession(sessionId);
   };
+
+  // The task open in the detail, if any: a review names its task directly; a
+  // chat names a session, resolved to its task above.
+  const detailTask = reviewTask ?? taskForSession;
 
   let workArea: ReactNode;
   if (status === "connecting") {
@@ -152,30 +164,14 @@ export default function App() {
         Connecting to the server…
       </div>
     );
-  } else if (reviewTask) {
+  } else if (detailTask) {
     workArea = (
-      <DiffView
-        key={reviewTask.id}
-        task={reviewTask}
-        onDone={() => setReviewTask(null)}
+      <TaskDetail
+        key={detailTask.id}
+        task={detailTask}
+        initialTab={reviewTask ? "diff" : "chat"}
+        onClose={goBoard}
       />
-    );
-  } else if (activeSession) {
-    workArea = (
-      <div className="flex h-full flex-col">
-        <header className="flex items-center border-b px-2 py-1.5">
-          <Button variant="ghost" size="sm" onClick={goBoard}>
-            ← Board
-          </Button>
-        </header>
-        <div className="flex-1 overflow-hidden">
-          <ChatView
-            key={activeSession}
-            sessionId={activeSession}
-            onSpawned={() => {}}
-          />
-        </div>
-      </div>
     );
   } else {
     workArea = (
@@ -193,7 +189,7 @@ export default function App() {
       project={project}
       onSwitchProject={() => void handleOpenProject()}
       onGoBoard={goBoard}
-      boardActive={!activeSession && !reviewTask}
+      boardActive={!detailTask}
       taskList={
         <TaskListPanel
           activeSessionId={activeSession}
