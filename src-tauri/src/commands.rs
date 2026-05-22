@@ -246,3 +246,36 @@ pub async fn reorder_tasks(
         .map_err(|err| err.to_string())?;
     Ok(())
 }
+
+/// Returns a task's pending worktree changes for review (`git.diff`).
+#[tauri::command]
+pub async fn git_diff(task_id: String, state: State<'_, AppState>) -> Result<Value, String> {
+    let client = state.client().await.ok_or("server not connected")?;
+    client
+        .call("git.diff", json!({ "task_id": task_id }))
+        .await
+        .map_err(|err| err.to_string())
+}
+
+/// Commits a task's worktree changes, moving it to Review (`git.commit`).
+#[tauri::command]
+pub async fn git_commit(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let client = state.client().await.ok_or("server not connected")?;
+    client
+        .call("git.commit", json!({ "task_id": task_id }))
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+/// Discards a task's worktree changes, moving it back to In Progress
+/// (`git.restore`).
+#[tauri::command]
+pub async fn git_restore(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let client = state.client().await.ok_or("server not connected")?;
+    client
+        .call("git.restore", json!({ "task_id": task_id }))
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
