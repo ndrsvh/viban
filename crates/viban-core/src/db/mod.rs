@@ -12,6 +12,7 @@ use anyhow::{Context, Result};
 use tokio_rusqlite::rusqlite::{self, params, OptionalExtension};
 use tokio_rusqlite::Connection;
 
+use crate::now_millis;
 use crate::types::{Message, Session};
 
 /// The viban session/message store. Cheap to clone — the inner connection
@@ -169,6 +170,43 @@ impl Db {
             .context("failed to insert message")?;
         Ok(())
     }
+
+    /// Records that a session edited `path`. Idempotent — re-touching a file
+    /// keeps its first-seen timestamp.
+    pub async fn record_session_file(&self, session_id: String, path: String) -> Result<()> {
+        let created_at = now_millis();
+        self.conn
+            .call(move |conn| -> rusqlite::Result<()> {
+                conn.execute(
+                    "INSERT OR IGNORE INTO session_files (session_id, path, created_at) \
+                     VALUES (?1, ?2, ?3)",
+                    params![session_id, path, created_at],
+                )?;
+                Ok(())
+            })
+            .await
+            .context("failed to record session file")?;
+        Ok(())
+    }
+
+    /// The files a session has edited, in first-touched order.
+    pub async fn list_session_files(&self, session_id: String) -> Result<Vec<String>> {
+        let files = self
+            .conn
+            .call(move |conn| -> rusqlite::Result<Vec<String>> {
+                let mut stmt = conn.prepare(
+                    "SELECT path FROM session_files \
+                     WHERE session_id = ?1 ORDER BY created_at, path",
+                )?;
+                let rows = stmt
+                    .query_map(params![session_id], |row| row.get(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await
+            .context("failed to list session files")?;
+        Ok(files)
+    }
 }
 
 fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<Session> {
@@ -307,6 +345,33 @@ mod tests {
             })
             .await
             .expect("query migration versions");
-        assert_eq!(versions, vec![1, 2, 3, 4], "all migrations are recorded");
+        assert_eq!(versions, vec![1, 2, 3, 4, 5], "all migrations are recorded");
+    }
+
+    #[tokio::test]
+    async fn session_files_are_recorded_deduped_and_scoped() {
+        let db = Db::open_in_memory().await.expect("open");
+        db.create_session(session("s1")).await.expect("create s1");
+        db.create_session(session("s2")).await.expect("create s2");
+
+        db.record_session_file("s1".into(), "src/a.rs".into())
+            .await
+            .expect("record a");
+        db.record_session_file("s1".into(), "src/b.rs".into())
+            .await
+            .expect("record b");
+        // Re-touching a file must not duplicate it.
+        db.record_session_file("s1".into(), "src/a.rs".into())
+            .await
+            .expect("re-record a");
+        db.record_session_file("s2".into(), "other.rs".into())
+            .await
+            .expect("record for s2");
+
+        let files = db.list_session_files("s1".into()).await.expect("list s1");
+        assert_eq!(files, vec!["src/a.rs", "src/b.rs"]);
+
+        let other = db.list_session_files("s2".into()).await.expect("list s2");
+        assert_eq!(other, vec!["other.rs"], "files are scoped per session");
     }
 }

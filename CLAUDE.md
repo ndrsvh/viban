@@ -486,6 +486,20 @@ agent also raises a toast.
 OS-level notifications (reaching the user when the window is unfocused) are a
 deliberate later addition — the in-app dot and toast come first.
 
+### Session-to-file linkage
+
+A session's chat view lists the files its agent has edited — its footprint —
+so you can see what it changed without reading every message. This works even
+in "Work without Git" mode, where there is no worktree to `git diff`.
+
+The server watches the agent event stream for file-editing tool calls
+(`Edit` / `Write` / `MultiEdit` carry `file_path`, `NotebookEdit` carries
+`notebook_path`; read-only tools are ignored) and records each distinct path
+in a `session_files` table — durable, so the footprint survives a restart.
+`sessions.get` returns the recorded `files`. While a chat is open the view
+also grows the list live from the `tool_use` events it already receives, so
+no extra subscription is needed.
+
 ## Coding conventions
 
 ### Rust

@@ -113,7 +113,7 @@ pub(super) async fn list(ctx: &Context) -> Result<Value, RpcError> {
     Ok(json!({ "sessions": sessions }))
 }
 
-/// Returns a session and its full message history.
+/// Returns a session, its full message history, and the files it has edited.
 pub(super) async fn get(params: Value, ctx: &Context) -> Result<Value, RpcError> {
     let session_id = str_param(&params, "session_id")?.to_string();
     let session = ctx
@@ -121,8 +121,9 @@ pub(super) async fn get(params: Value, ctx: &Context) -> Result<Value, RpcError>
         .get_session(session_id.clone())
         .await?
         .ok_or_else(|| RpcError::invalid_params(format!("unknown session: {session_id}")))?;
-    let messages = ctx.db.get_messages(session_id).await?;
-    Ok(json!({ "session": session, "messages": messages }))
+    let messages = ctx.db.get_messages(session_id.clone()).await?;
+    let files = ctx.db.list_session_files(session_id).await?;
+    Ok(json!({ "session": session, "messages": messages, "files": files }))
 }
 
 /// Resolves the working directory for a session's agent: the worktree of the
@@ -145,6 +146,25 @@ async fn task_of(ctx: &Context, session_id: &str) -> Result<Option<String>, RpcE
         .get_attempt_by_session(session_id.to_string())
         .await?;
     Ok(attempt.map(|attempt| attempt.task_id))
+}
+
+/// The path of the file an agent event edited, if it is a file-modifying
+/// tool call. Used to build a session's file footprint.
+fn edited_path(event: &AgentEvent) -> Option<String> {
+    let AgentEvent::ToolUse { name, input } = event else {
+        return None;
+    };
+    // Claude Code's file-editing tools carry the path in `file_path`; the
+    // notebook tool uses `notebook_path`. Read-only tools are ignored.
+    let key = match name.as_str() {
+        "Edit" | "Write" | "MultiEdit" => "file_path",
+        "NotebookEdit" => "notebook_path",
+        _ => return None,
+    };
+    input
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(String::from)
 }
 
 /// The status transition an agent event triggers, if any. Conversational
@@ -204,6 +224,13 @@ fn spawn_event_pump(
             }
             if let Err(err) = persist_event(&db, &session_id, &event).await {
                 tracing::warn!(%err, "failed to persist agent event");
+            }
+
+            // Record any file the agent edited, for the session's footprint.
+            if let Some(path) = edited_path(&event) {
+                if let Err(err) = db.record_session_file(session_id.clone(), path).await {
+                    tracing::warn!(%err, "failed to record session file");
+                }
             }
 
             // Move the task's live status on the turn's end.
@@ -348,5 +375,61 @@ mod tests {
             session_id: "s".into(),
         })
         .is_none());
+    }
+
+    #[test]
+    fn edited_path_extracts_paths_from_file_editing_tools() {
+        use viban_core::AgentEvent;
+        let edit = AgentEvent::ToolUse {
+            name: "Edit".into(),
+            input: json!({ "file_path": "src/a.rs" }),
+        };
+        assert_eq!(super::edited_path(&edit).as_deref(), Some("src/a.rs"));
+        let write = AgentEvent::ToolUse {
+            name: "Write".into(),
+            input: json!({ "file_path": "README.md" }),
+        };
+        assert_eq!(super::edited_path(&write).as_deref(), Some("README.md"));
+        let notebook = AgentEvent::ToolUse {
+            name: "NotebookEdit".into(),
+            input: json!({ "notebook_path": "nb.ipynb" }),
+        };
+        assert_eq!(super::edited_path(&notebook).as_deref(), Some("nb.ipynb"));
+    }
+
+    #[test]
+    fn edited_path_ignores_read_only_tools_and_other_events() {
+        use viban_core::AgentEvent;
+        let read = AgentEvent::ToolUse {
+            name: "Read".into(),
+            input: json!({ "file_path": "src/a.rs" }),
+        };
+        assert!(super::edited_path(&read).is_none(), "a read is not an edit");
+        assert!(super::edited_path(&AgentEvent::AssistantText { text: "hi".into() }).is_none());
+    }
+
+    #[tokio::test]
+    async fn get_includes_the_sessions_edited_files() {
+        use viban_core::types::Session;
+        let (ctx, _ws, _data) = context().await;
+        ctx.db
+            .create_session(Session {
+                id: "s1".into(),
+                claude_session_id: None,
+                title: "t".into(),
+                created_at: 0,
+                project_path: "/p".into(),
+            })
+            .await
+            .expect("create session");
+        ctx.db
+            .record_session_file("s1".into(), "src/main.rs".into())
+            .await
+            .expect("record file");
+
+        let result = super::get(json!({ "session_id": "s1" }), &ctx)
+            .await
+            .expect("get");
+        assert_eq!(result["files"][0], "src/main.rs");
     }
 }

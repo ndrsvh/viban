@@ -80,6 +80,25 @@ FROM tasks
 WHERE session_id IS NOT NULL;
 ";
 
+/// Migration 5 — session_files: the files an agent session has edited,
+/// recorded from its tool calls so a session's footprint survives a restart.
+pub const MIGRATION_5: &str = "
+CREATE TABLE session_files (
+    session_id TEXT NOT NULL REFERENCES sessions(id),
+    path       TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (session_id, path)
+);
+
+CREATE INDEX idx_session_files_session ON session_files (session_id, created_at);
+";
+
 /// Every migration, in application order. A migration's version is its
 /// 1-based index in this list.
-pub const MIGRATIONS: &[&str] = &[MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4];
+pub const MIGRATIONS: &[&str] = &[
+    MIGRATION_1,
+    MIGRATION_2,
+    MIGRATION_3,
+    MIGRATION_4,
+    MIGRATION_5,
+];
