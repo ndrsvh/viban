@@ -1,8 +1,3 @@
-/** Mirror of `viban_core::AgentEvent` — a normalized Claude Code session event. */
-export type AgentEvent =
-  | { type: "session_started"; session_id: string }
-  | { type: "assistant_text"; text: string }
-  | { type: "tool_use"; name: string; input: unknown }
-  | { type: "result"; is_error: boolean }
-  | { type: "error"; message: string }
-  | { type: "raw"; payload: unknown };
+// A normalized Claude Code session event. Generated from
+// `viban_core::AgentEvent` by ts-rs — see src/types/generated/.
+export type { AgentEvent } from "./generated/AgentEvent";

@@ -8,27 +8,38 @@ pub use claude_code::{generate_commit_message, spawn_claude, ClaudeSession};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use ts_rs::TS;
 
 /// A normalized event from a running Claude Code session.
 ///
 /// Claude Code's stdout schema shifts between CLI versions, so only the
 /// events viban acts on are classified; everything else passes through as
 /// `Raw` so nothing is silently lost.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[ts(export, export_to = "../../../src/types/generated/")]
 pub enum AgentEvent {
     /// The session announced itself; carries the Claude Code session id.
     SessionStarted { session_id: String },
     /// The assistant produced text.
     AssistantText { text: String },
     /// The assistant invoked a tool.
-    ToolUse { name: String, input: Value },
+    ToolUse {
+        name: String,
+        /// Free-form tool input — opaque to viban.
+        #[ts(type = "unknown")]
+        input: Value,
+    },
     /// The turn finished.
     Result { is_error: bool },
     /// A fatal error in the session.
     Error { message: String },
     /// An unclassified event, passed through verbatim.
-    Raw { payload: Value },
+    Raw {
+        /// The original event JSON.
+        #[ts(type = "unknown")]
+        payload: Value,
+    },
 }
 
 #[cfg(test)]
