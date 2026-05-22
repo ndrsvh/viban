@@ -24,7 +24,10 @@ pub type SessionRegistry = Arc<Mutex<HashMap<String, ClaudeSession>>>;
 
 /// Shared state for method handlers.
 pub struct Context {
+    /// The user's project folder. viban never writes into it.
     pub workspace: PathBuf,
+    /// viban's own data directory for this project (database, worktrees).
+    pub data_dir: PathBuf,
     pub db: Db,
 }
 
@@ -448,11 +451,7 @@ async fn create_task_attempt(ctx: &Context, task: &mut Task) -> Result<String, R
     let session_id = new_id();
     let id_fragment: String = attempt_id.chars().take(8).collect();
     let branch = format!("viban/{}-{}", git::slugify(&task.title), id_fragment);
-    let worktree_path = ctx
-        .workspace
-        .join(".viban")
-        .join("worktrees")
-        .join(&attempt_id);
+    let worktree_path = ctx.data_dir.join("worktrees").join(&attempt_id);
 
     if let Some(parent) = worktree_path.parent() {
         tokio::fs::create_dir_all(parent)

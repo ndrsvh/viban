@@ -22,8 +22,9 @@ type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 /// A running viban-server with an authenticated client connection. The server
 /// process is killed when this value is dropped.
 pub struct TestServer {
-    /// The temporary git repository the server operates on.
+    /// The temporary directory holding the workspace and viban's data.
     pub root: tempfile::TempDir,
+    workspace: PathBuf,
     server: Child,
     ws: Ws,
     next_id: i64,
@@ -42,13 +43,25 @@ impl TestServer {
 
     async fn start_inner(with_git: bool) -> Self {
         let root = tempfile::tempdir().expect("create temp dir");
+        // The workspace and viban's data dir are separate subdirectories, so
+        // the data dir is never inside the project's git repo.
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir_all(&workspace).expect("create workspace dir");
         if with_git {
-            init_git_repo(root.path());
+            init_git_repo(&workspace);
         }
+        let data_dir = root.path().join("data");
 
         let token = "integration-test-token";
         let mut server = Command::new(env!("CARGO_BIN_EXE_viban-server"))
-            .args(["--port", "0", "--workspace", &root.path().to_string_lossy()])
+            .args([
+                "--port",
+                "0",
+                "--workspace",
+                &workspace.to_string_lossy(),
+                "--data-dir",
+                &data_dir.to_string_lossy(),
+            ])
             .env("VIBAN_AUTH_TOKEN", token)
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -74,6 +87,7 @@ impl TestServer {
 
         Self {
             root,
+            workspace,
             server,
             ws,
             next_id: 1,
@@ -82,7 +96,7 @@ impl TestServer {
 
     /// The workspace path the server runs against.
     pub fn workspace(&self) -> &Path {
-        self.root.path()
+        &self.workspace
     }
 
     /// Sends a JSON-RPC request and returns the full response object,

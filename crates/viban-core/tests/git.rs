@@ -282,11 +282,6 @@ async fn prepare_repo_initializes_a_plain_folder() {
         "the folder is now a repo"
     );
     assert!(git::has_head(dir.path()).await, "with an initial commit");
-    let gitignore = std::fs::read_to_string(dir.path().join(".gitignore")).unwrap_or_default();
-    assert!(
-        gitignore.lines().any(|line| line.trim() == ".viban/"),
-        ".viban/ is gitignored before the initial commit"
-    );
 }
 
 #[tokio::test]

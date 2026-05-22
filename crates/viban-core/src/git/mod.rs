@@ -57,15 +57,18 @@ pub async fn has_head(dir: &Path) -> bool {
 /// Ensures `dir` is a git repository with at least one commit, creating the
 /// repository and/or an initial commit as needed. A no-op for a repo that is
 /// already set up, so it is safe to call before any worktree operation.
+///
+/// viban keeps its own data outside the project (ADR-0003), so this writes
+/// nothing into the repo beyond the initial commit of the user's own files.
 pub async fn prepare_repo(dir: &Path) -> Result<()> {
     if !is_git_repo(dir).await {
         run_git(dir, &["init"]).await?;
     }
     if !has_head(dir).await {
         ensure_git_identity(dir).await?;
-        ensure_gitignored(dir, ".viban/").await?;
         run_git(dir, &["add", "-A"]).await?;
-        run_git(dir, &["commit", "-m", "Initial commit"]).await?;
+        // `--allow-empty` so an empty folder still gets a HEAD for worktrees.
+        run_git(dir, &["commit", "--allow-empty", "-m", "Initial commit"]).await?;
     }
     Ok(())
 }
