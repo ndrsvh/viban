@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { X } from "lucide-react";
 import {
   closestCorners,
@@ -27,14 +26,9 @@ import { GitInitDialog } from "@/components/git-init-dialog";
 import { TaskCard } from "@/components/task-card";
 import { TaskDialog } from "@/components/task-dialog";
 import { Button } from "@/components/ui/button";
+import { rpc } from "@/lib/rpc";
 import { cn } from "@/lib/utils";
 import type { Column, Task } from "@/types/board";
-
-/** Result of the `start_session` command. */
-interface StartSessionResult {
-  session_id?: string;
-  needs_git_init?: boolean;
-}
 
 interface BoardViewProps {
   onOpenSession: (sessionId: string) => void;
@@ -76,9 +70,7 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
 
   const loadBoard = useCallback(async () => {
     try {
-      const result = await invoke<{ columns: Column[]; tasks: Task[] }>(
-        "get_board",
-      );
+      const result = await rpc.getBoard();
       const taskMap: Record<string, Task> = {};
       const grouped: Record<string, string[]> = {};
       for (const column of result.columns) grouped[column.id] = [];
@@ -138,7 +130,7 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
     setColumnTasks(next);
 
     for (const columnId of new Set([from, to])) {
-      void invoke("reorder_tasks", { columnId, taskIds: next[columnId] });
+      void rpc.reorderTasks(columnId, next[columnId]);
     }
   }
 
@@ -151,11 +143,7 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
       // The server links a session to the task. By default that means an
       // isolated git worktree; if the project folder is not a git repo it
       // asks how to proceed first (init git, or work without git).
-      const result = await invoke<StartSessionResult>("start_session", {
-        taskId: task.id,
-        initGit: options.initGit ?? false,
-        withoutGit: options.withoutGit ?? false,
-      });
+      const result = await rpc.startSession(task.id, options);
       if (result.needs_git_init) {
         setGitInitTask(task);
         return;
@@ -191,9 +179,7 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
   async function handleNewAttempt(task: Task) {
     setActionError(null);
     try {
-      const result = await invoke<StartSessionResult>("create_attempt", {
-        taskId: task.id,
-      });
+      const result = await rpc.createAttempt(task.id);
       if (result.session_id) {
         await loadBoard();
         onOpenSession(result.session_id);
@@ -210,7 +196,7 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
     setActionError(null);
     setMergeBusy(true);
     try {
-      await invoke("git_merge", { taskId: task.id });
+      await rpc.gitMerge(task.id);
       await loadBoard();
     } catch (err) {
       console.error(err);
