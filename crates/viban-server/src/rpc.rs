@@ -6,7 +6,7 @@
 //! message is persisted to SQLite so conversations survive a restart.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -17,7 +17,7 @@ use tokio::sync::{mpsc, Mutex};
 use viban_core::agents::{spawn_claude, ClaudeSession};
 use viban_core::db::Db;
 use viban_core::types::{Message, Session, Task};
-use viban_core::{new_id, AgentEvent};
+use viban_core::{git, new_id, AgentEvent};
 
 /// Running agent sessions for one connection, keyed by viban session id.
 pub type SessionRegistry = Arc<Mutex<HashMap<String, ClaudeSession>>>;
@@ -127,8 +127,9 @@ async fn dispatch(
         "boards.get" => boards_get(ctx).await,
         "tasks.create" => tasks_create(params, ctx).await,
         "tasks.update" => tasks_update(params, ctx).await,
-        "tasks.delete" => tasks_delete(params, ctx).await,
+        "tasks.delete" => tasks_delete(params, ctx, registry).await,
         "tasks.reorder" => tasks_reorder(params, ctx).await,
+        "tasks.start_session" => tasks_start_session(params, ctx).await,
         other => Err(RpcError::method_not_found(other)),
     }
 }
@@ -144,19 +145,20 @@ async fn agents_spawn(
     let session_id = str_param(&params, "session_id")?.to_string();
     let prompt = str_param(&params, "prompt")?;
 
+    let workdir = agent_workdir(ctx, &session_id).await?;
     ctx.db
         .create_session(Session {
             id: session_id.clone(),
             claude_session_id: None,
             title: make_title(prompt),
             created_at: now_millis(),
-            project_path: ctx.workspace.display().to_string(),
+            project_path: workdir.display().to_string(),
         })
         .await
         .map_err(|err| RpcError::internal(format!("failed to create session: {err}")))?;
     persist_user_message(&ctx.db, &session_id, prompt).await?;
 
-    let (mut agent, events) = spawn_claude(&ctx.workspace, None)
+    let (mut agent, events) = spawn_claude(&workdir, None)
         .map_err(|err| RpcError::internal(format!("failed to spawn agent: {err}")))?;
     agent
         .send_message(prompt)
@@ -213,8 +215,9 @@ async fn sessions_send_message(
             .claude_session_id
             .ok_or_else(|| RpcError::internal("session cannot be resumed: no Claude Code id"))?;
 
-        let (mut agent, events) = spawn_claude(&ctx.workspace, Some(&claude_session_id))
-            .map_err(|err| RpcError::internal(format!("failed to resume agent: {err}")))?;
+        let (mut agent, events) =
+            spawn_claude(Path::new(&stored.project_path), Some(&claude_session_id))
+                .map_err(|err| RpcError::internal(format!("failed to resume agent: {err}")))?;
         agent
             .send_message(prompt)
             .await
@@ -314,6 +317,8 @@ async fn tasks_create(params: Value, ctx: &Context) -> Result<Value, RpcError> {
         description,
         position,
         session_id: None,
+        worktree_path: None,
+        branch: None,
         created_at: now_millis(),
     };
     ctx.db
@@ -350,14 +355,101 @@ async fn tasks_update(params: Value, ctx: &Context) -> Result<Value, RpcError> {
     Ok(json!({ "task": task }))
 }
 
-/// Deletes a task.
-async fn tasks_delete(params: Value, ctx: &Context) -> Result<Value, RpcError> {
+/// Deletes a task, tearing down its worktree, branch, and any live agent.
+async fn tasks_delete(
+    params: Value,
+    ctx: &Context,
+    registry: &SessionRegistry,
+) -> Result<Value, RpcError> {
     let task_id = str_param(&params, "task_id")?.to_string();
+
+    let task = ctx
+        .db
+        .get_task(task_id.clone())
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+
+    if let Some(task) = task {
+        if let Some(session_id) = &task.session_id {
+            registry.lock().await.remove(session_id);
+        }
+        if let Some(worktree_path) = &task.worktree_path {
+            if let Err(err) =
+                git::worktree_remove(&ctx.workspace, Path::new(worktree_path), true).await
+            {
+                tracing::warn!(%err, "failed to remove worktree");
+            }
+        }
+        if let Some(branch) = &task.branch {
+            if let Err(err) = git::branch_delete(&ctx.workspace, branch).await {
+                tracing::warn!(%err, "failed to delete branch");
+            }
+        }
+    }
+
     ctx.db
         .delete_task(task_id)
         .await
         .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
     Ok(json!({ "ok": true }))
+}
+
+/// Creates a git worktree + branch for a task and links a fresh session to it.
+/// Idempotent: a task that already has a session returns its existing id.
+async fn tasks_start_session(params: Value, ctx: &Context) -> Result<Value, RpcError> {
+    let task_id = str_param(&params, "task_id")?.to_string();
+    let mut task = ctx
+        .db
+        .get_task(task_id.clone())
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+        .ok_or_else(|| RpcError::invalid_params(format!("unknown task: {task_id}")))?;
+
+    if let Some(session_id) = &task.session_id {
+        return Ok(json!({ "session_id": session_id }));
+    }
+
+    let id_fragment: String = task_id.chars().take(8).collect();
+    let branch = format!("viban/{}-{}", git::slugify(&task.title), id_fragment);
+    let worktree_path = ctx
+        .workspace
+        .join(".viban")
+        .join("worktrees")
+        .join(&task_id);
+
+    if let Some(parent) = worktree_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|err| RpcError::internal(format!("failed to create worktree dir: {err}")))?;
+    }
+    git::worktree_add(&ctx.workspace, &worktree_path, &branch)
+        .await
+        .map_err(|err| RpcError::internal(format!("failed to create worktree: {err}")))?;
+
+    let session_id = new_id();
+    task.session_id = Some(session_id.clone());
+    task.worktree_path = Some(worktree_path.display().to_string());
+    task.branch = Some(branch);
+    ctx.db
+        .update_task(task)
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+
+    Ok(json!({ "session_id": session_id }))
+}
+
+/// Resolves the working directory for a session's agent: the linked task's
+/// worktree path if it has one, otherwise the shared workspace.
+async fn agent_workdir(ctx: &Context, session_id: &str) -> Result<PathBuf, RpcError> {
+    let task = ctx
+        .db
+        .get_task_by_session(session_id.to_string())
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+    Ok(task
+        .and_then(|task| task.worktree_path)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| ctx.workspace.clone()))
 }
 
 /// Applies a column's full task ordering (also re-parents moved tasks).
