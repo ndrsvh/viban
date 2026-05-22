@@ -90,12 +90,21 @@ pub async fn merge_branch(repo: &Path, branch: &str) -> Result<()> {
 
 /// Sets a repo-local git identity when none is configured, so the initial
 /// commit does not fail on a machine without global git config.
+///
+/// `user.name` and `user.email` are checked independently: a machine may have
+/// one set globally but not the other, and `git commit` fails unless *both*
+/// resolve.
 async fn ensure_git_identity(dir: &Path) -> Result<()> {
     let email = run_git(dir, &["config", "user.email"])
         .await
         .unwrap_or_default();
     if email.trim().is_empty() {
         run_git(dir, &["config", "user.email", "viban@localhost"]).await?;
+    }
+    let name = run_git(dir, &["config", "user.name"])
+        .await
+        .unwrap_or_default();
+    if name.trim().is_empty() {
         run_git(dir, &["config", "user.name", "viban"]).await?;
     }
     Ok(())
