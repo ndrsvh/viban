@@ -21,6 +21,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { GitInitDialog } from "@/components/git-init-dialog";
 import { TaskCard } from "@/components/task-card";
 import { TaskDialog } from "@/components/task-dialog";
@@ -60,6 +61,9 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
   // The task awaiting git-init confirmation, and whether init is running.
   const [gitInitTask, setGitInitTask] = useState<Task | null>(null);
   const [gitInitBusy, setGitInitBusy] = useState(false);
+  // The task awaiting merge confirmation, and whether the merge is running.
+  const [mergeTask, setMergeTask] = useState<Task | null>(null);
+  const [mergeBusy, setMergeBusy] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -165,6 +169,20 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
     setGitInitBusy(false);
   }
 
+  async function confirmMerge() {
+    const task = mergeTask;
+    if (!task) return;
+    setMergeBusy(true);
+    try {
+      await invoke("git_merge", { taskId: task.id });
+      await loadBoard();
+    } catch (err) {
+      console.error(err);
+    }
+    setMergeBusy(false);
+    setMergeTask(null);
+  }
+
   function openCreate(columnId: string) {
     setDialogTask(null);
     setDialogColumn(columnId);
@@ -203,6 +221,7 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
               onOpenSession={onOpenSession}
               onStartSession={handleStartSession}
               onReview={onReview}
+              onMerge={(task) => setMergeTask(task)}
               onEdit={openEdit}
               onAddTask={openCreate}
             />
@@ -233,6 +252,24 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
           if (!open && !gitInitBusy) setGitInitTask(null);
         }}
       />
+
+      <ConfirmDialog
+        open={mergeTask !== null}
+        title="Merge this task?"
+        description={
+          mergeTask
+            ? `Merge ${mergeTask.branch ?? "the task branch"} into the project, ` +
+              "remove the worktree, and move the task to Done."
+            : ""
+        }
+        confirmLabel="Merge branch"
+        busyLabel="Merging…"
+        busy={mergeBusy}
+        onConfirm={() => void confirmMerge()}
+        onOpenChange={(open) => {
+          if (!open && !mergeBusy) setMergeTask(null);
+        }}
+      />
     </div>
   );
 }
@@ -246,6 +283,7 @@ interface BoardColumnProps {
   onOpenSession: (sessionId: string) => void;
   onStartSession: (task: Task) => void;
   onReview: (task: Task) => void;
+  onMerge: (task: Task) => void;
   onEdit: (task: Task) => void;
   onAddTask: (columnId: string) => void;
 }
@@ -258,6 +296,7 @@ function BoardColumn({
   onOpenSession,
   onStartSession,
   onReview,
+  onMerge,
   onEdit,
   onAddTask,
 }: BoardColumnProps) {
@@ -287,6 +326,7 @@ function BoardColumn({
                 onOpenSession={onOpenSession}
                 onStartSession={onStartSession}
                 onReview={onReview}
+                onMerge={onMerge}
                 onEdit={onEdit}
               />
             ) : null;

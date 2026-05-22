@@ -40,6 +40,7 @@ interface Handlers {
   onOpenSession: (sessionId: string) => void;
   onStartSession: (task: Task) => void;
   onReview: (task: Task) => void;
+  onMerge: (task: Task) => void;
   onEdit: (task: Task) => void;
 }
 
@@ -48,6 +49,7 @@ function renderCard(task: Task, handlers: Partial<Handlers> = {}) {
     onOpenSession: handlers.onOpenSession ?? vi.fn(),
     onStartSession: handlers.onStartSession ?? vi.fn(),
     onReview: handlers.onReview ?? vi.fn(),
+    onMerge: handlers.onMerge ?? vi.fn(),
     onEdit: handlers.onEdit ?? vi.fn(),
   };
   render(
@@ -127,5 +129,24 @@ describe("TaskCard", () => {
     renderCard(task, { onReview });
     await user.click(screen.getByRole("button", { name: "Review" }));
     expect(onReview).toHaveBeenCalledWith(task);
+  });
+
+  it("offers Merge only once the task has a branch", async () => {
+    const user = userEvent.setup();
+
+    renderCard(makeTask());
+    expect(
+      screen.queryByRole("button", { name: "Merge" }),
+    ).not.toBeInTheDocument();
+
+    const onMerge = vi.fn();
+    const task = makeTask({
+      session_id: "sess-1",
+      worktree_path: "/repo/.viban/worktrees/t1",
+      branch: "viban/my-task-1",
+    });
+    renderCard(task, { onMerge });
+    await user.click(screen.getByRole("button", { name: "Merge" }));
+    expect(onMerge).toHaveBeenCalledWith(task);
   });
 });
