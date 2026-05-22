@@ -542,6 +542,19 @@ the worktree and dropping anything created since — so it is confirmed first.
 `checkpoints.{create,list,restore}` serve the DiffView's checkpoint bar.
 Checkpoints need a worktree, so they do not apply to a no-git task.
 
+### Application shell
+
+The UI is built around a persistent **application shell** rather than a stack
+of full-screen views. A narrow **activity rail**, a **task-list panel**, the
+**work area**, a collapsible **inspector**, and a **status bar** stay mounted
+while only the work area changes. Opening a task swaps the work area to a
+tabbed **task detail** (`Chat | Diff | Run | Files`); `Cmd/Ctrl-K` opens a
+**command palette** for task search and quick actions. The layout is
+master-detail — the task-list panel is always present, and a selected task's
+detail fills the work area. Design, rationale, and the competitor research
+behind it: `docs/decisions/0004-app-shell-and-information-architecture.md`
+and `docs/research/ui-competitor-research.md`.
+
 ## Coding conventions
 
 ### Rust
