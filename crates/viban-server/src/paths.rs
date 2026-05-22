@@ -46,6 +46,16 @@ mod tests {
     }
 
     #[test]
+    fn project_data_dir_defaults_under_the_os_data_dir() {
+        let dir = project_data_dir(None, Path::new("/some/project")).expect("dir");
+        let base = dirs::data_local_dir()
+            .expect("an OS data dir")
+            .join("viban");
+        assert!(dir.starts_with(&base), "{dir:?} should sit under {base:?}");
+        assert!(dir.to_string_lossy().contains("projects"));
+    }
+
+    #[test]
     fn project_key_is_stable_and_distinct() {
         let a1 = project_data_dir(Some(Path::new("/d")), Path::new("/proj/a")).expect("a");
         let a2 = project_data_dir(Some(Path::new("/d")), Path::new("/proj/a")).expect("a");
