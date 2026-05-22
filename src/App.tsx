@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { Channel } from "@tauri-apps/api/core";
 
 import { AppShell, type ServerStatus } from "@/components/app-shell";
 import { BoardView } from "@/components/board-view";
 import { ChatView } from "@/components/chat-view";
 import { DiffView } from "@/components/diff-view";
+import { TaskListPanel } from "@/components/task-list-panel";
 import { Button } from "@/components/ui/button";
 import { rpc } from "@/lib/rpc";
-import type { Task } from "@/types/board";
+import { useBoardStore } from "@/stores/useBoardStore";
+import { toast } from "@/stores/useToastStore";
+import type { Task, TaskStatusUpdate } from "@/types/board";
 
 // The server is polled continuously so the UI reflects sidecar restarts.
 const POLL_INTERVAL_MS = 1500;
@@ -58,6 +62,29 @@ export default function App() {
     };
   }, [project]);
 
+  // Subscribe to the live task-status feed while connected. It lives here, at
+  // the shell level, so the task-list panel and board cards stay live no
+  // matter which work area is open — and it re-subscribes after a reconnect.
+  useEffect(() => {
+    if (status !== "ready") return;
+    const channel = new Channel<TaskStatusUpdate>();
+    channel.onmessage = (update) => {
+      useBoardStore.getState().setStatus(update.task_id, update.status);
+      if (update.status === "running") return;
+      const title = useBoardStore.getState().tasks[update.task_id]?.title;
+      const name = title ? `"${title}"` : "A task";
+      if (update.status === "done") {
+        toast.info(`${name} — the agent finished.`);
+      } else {
+        toast.error(`${name} — the agent failed.`);
+      }
+    };
+    void rpc.watchTaskStatus(channel);
+    return () => {
+      void rpc.unwatchTaskStatus();
+    };
+  }, [status]);
+
   const handleOpenProject = useCallback(async () => {
     setProjectError(null);
     try {
@@ -103,18 +130,23 @@ export default function App() {
   }
 
   // A project is open: the persistent shell hosts every view. The work area
-  // swaps between the board, a session chat, and a diff review; the rail and
-  // status bar stay mounted (ADR-0004).
+  // swaps between the board, a session chat, and a diff review; the rail,
+  // task-list panel, and status bar stay mounted (ADR-0004).
   const goBoard = () => {
     setActiveSession(null);
     setReviewTask(null);
   };
 
+  const openSession = (sessionId: string) => {
+    setReviewTask(null);
+    setActiveSession(sessionId);
+  };
+
   let workArea: ReactNode;
   if (status === "connecting") {
-    // The first connection is not established yet. The rail and status bar
-    // still render, so this is a work-area placeholder — not, as before, a
-    // full-screen takeover.
+    // The first connection is not established yet. The rail, task list, and
+    // status bar still render, so this is a work-area placeholder — not, as
+    // before, a full-screen takeover.
     workArea = (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
         Connecting to the server…
@@ -149,7 +181,7 @@ export default function App() {
     workArea = (
       <BoardView
         key={project}
-        onOpenSession={setActiveSession}
+        onOpenSession={openSession}
         onReview={setReviewTask}
       />
     );
@@ -162,6 +194,13 @@ export default function App() {
       onSwitchProject={() => void handleOpenProject()}
       onGoBoard={goBoard}
       boardActive={!activeSession && !reviewTask}
+      taskList={
+        <TaskListPanel
+          activeSessionId={activeSession}
+          reviewTaskId={reviewTask?.id ?? null}
+          onOpenSession={openSession}
+        />
+      }
     >
       <div className="flex h-full flex-col">
         {projectError && (

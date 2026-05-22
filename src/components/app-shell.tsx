@@ -17,6 +17,8 @@ interface AppShellProps {
   onGoBoard: () => void;
   /** Whether the board is the active destination (vs. a session or review). */
   boardActive: boolean;
+  /** The persistent task-list panel, rendered between the rail and work area. */
+  taskList: ReactNode;
   /** The work-area content. */
   children: ReactNode;
 }
@@ -46,6 +48,7 @@ export function AppShell({
   onSwitchProject,
   onGoBoard,
   boardActive,
+  taskList,
   children,
 }: AppShellProps) {
   const server = SERVER_STATUS[serverStatus];
@@ -69,6 +72,7 @@ export function AppShell({
             onClick={onGoBoard}
           />
         </nav>
+        {taskList}
         <div className="flex-1 overflow-hidden">{children}</div>
       </div>
       <footer className="flex h-7 shrink-0 items-center gap-3 border-t px-3 text-xs text-muted-foreground">

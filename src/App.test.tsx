@@ -116,4 +116,58 @@ describe("App", () => {
     // The board itself rendered.
     expect(await screen.findByText("Backlog")).toBeInTheDocument();
   });
+
+  it("updates a task's status dot from the live status feed", async () => {
+    setInvoke((command) => {
+      if (command === "current_project") {
+        return Promise.resolve("/home/me/myproject");
+      }
+      if (command === "server_health") {
+        return Promise.resolve({
+          status: "ok",
+          version: "0.1.0",
+          workspace: "/home/me/myproject",
+        });
+      }
+      if (command === "get_board") {
+        return Promise.resolve({
+          columns: [
+            { id: "c1", board_id: "b1", name: "Backlog", position: 0 },
+          ],
+          tasks: [
+            {
+              id: "t1",
+              column_id: "c1",
+              title: "Write tests",
+              description: "",
+              position: 0,
+              session_id: "s1",
+              worktree_path: null,
+              branch: null,
+              created_at: 0,
+            },
+          ],
+          statuses: {},
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    render(<App />);
+    // The task renders on both the board card and the task-list panel.
+    await screen.findAllByText("Write tests");
+
+    // The shell subscribed to the task-status feed once connected — fire one.
+    const call = invokeMock.mock.calls.find(
+      ([command]) => command === "watch_task_status",
+    );
+    const args = call?.[1] as {
+      onEvent: { onmessage?: (message: unknown) => void };
+    };
+    args.onEvent.onmessage?.({ task_id: "t1", status: "running" });
+
+    expect(
+      (await screen.findAllByLabelText("Agent running")).length,
+    ).toBeGreaterThan(0);
+  });
 });

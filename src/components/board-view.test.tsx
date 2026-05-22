@@ -9,8 +9,8 @@ import type { Column, Task } from "@/types/board";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
-  // A stand-in for tauri's event Channel — the board's task-status feed
-  // constructs one; tests fire updates by calling its `onmessage`.
+  // rpc.ts imports tauri's Channel at module load, so the mock must
+  // provide it even though these tests never construct one.
   Channel: class {
     onmessage: ((message: unknown) => void) | null = null;
   },
@@ -248,25 +248,6 @@ describe("BoardView", () => {
       expect(onOpenSession).toHaveBeenCalledWith("session-no-git"),
     );
     expect(startedWithoutGit).toBe(true);
-  });
-
-  it("updates a card's status dot from the live status feed", async () => {
-    boardWith([makeTask({ id: "t1", title: "Write tests" })]);
-    render(<BoardView onOpenSession={vi.fn()} onReview={vi.fn()} />);
-    await screen.findByText("Write tests");
-
-    // The board subscribed to the task-status feed on mount — fire an update.
-    const call = invokeMock.mock.calls.find(
-      ([command]) => command === "watch_task_status",
-    );
-    const args = call?.[1] as {
-      onEvent: { onmessage?: (message: unknown) => void };
-    };
-    args.onEvent.onmessage?.({ task_id: "t1", status: "running" });
-
-    expect(
-      await screen.findByLabelText("Agent running"),
-    ).toBeInTheDocument();
   });
 
   it("surfaces a dismissible banner when starting a session fails", async () => {

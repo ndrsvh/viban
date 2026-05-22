@@ -10,6 +10,7 @@ const baseProps = {
   onSwitchProject: vi.fn(),
   onGoBoard: vi.fn(),
   boardActive: true,
+  taskList: <div />,
 };
 
 describe("AppShell", () => {
@@ -20,6 +21,15 @@ describe("AppShell", () => {
       </AppShell>,
     );
     expect(screen.getByText("work area")).toBeInTheDocument();
+  });
+
+  it("renders the task-list slot", () => {
+    render(
+      <AppShell {...baseProps} taskList={<p>task list</p>}>
+        <div />
+      </AppShell>,
+    );
+    expect(screen.getByText("task list")).toBeInTheDocument();
   });
 
   it("shows the project name and a connected status", () => {

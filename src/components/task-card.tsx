@@ -2,22 +2,10 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
 import { Button } from "@/components/ui/button";
+import { STATUS_DOT, STATUS_LABEL } from "@/lib/agent-status";
 import { cn } from "@/lib/utils";
 import { useBoardStore } from "@/stores/useBoardStore";
-import type { AgentStatus, Task } from "@/types/board";
-
-/** Tailwind classes for the live-status dot, by agent status. */
-const STATUS_DOT: Record<AgentStatus, string> = {
-  running: "animate-pulse bg-amber-500",
-  done: "bg-emerald-500",
-  failed: "bg-red-500",
-};
-
-const STATUS_LABEL: Record<AgentStatus, string> = {
-  running: "Agent running",
-  done: "Agent finished",
-  failed: "Agent failed",
-};
+import type { Task } from "@/types/board";
 
 interface TaskCardProps {
   task: Task;
