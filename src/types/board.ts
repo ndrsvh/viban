@@ -6,3 +6,4 @@ export type { Task } from "./generated/Task";
 export type { Attempt } from "./generated/Attempt";
 export type { AgentStatus } from "./generated/AgentStatus";
 export type { TaskStatusUpdate } from "./generated/TaskStatusUpdate";
+export type { Checkpoint } from "./generated/Checkpoint";

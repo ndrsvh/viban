@@ -421,3 +421,50 @@ pub async fn git_merge(task_id: String, state: State<'_, AppState>) -> Result<()
         .map_err(|err| err.to_string())?;
     Ok(())
 }
+
+/// Saves a worktree checkpoint for a task (`checkpoints.create`).
+#[tauri::command]
+pub async fn create_checkpoint(
+    task_id: String,
+    label: String,
+    state: State<'_, AppState>,
+) -> Result<Value, String> {
+    let client = state.client().await.ok_or("server not connected")?;
+    client
+        .call(
+            "checkpoints.create",
+            json!({ "task_id": task_id, "label": label }),
+        )
+        .await
+        .map_err(|err| err.to_string())
+}
+
+/// Lists a task's saved checkpoints (`checkpoints.list`).
+#[tauri::command]
+pub async fn list_checkpoints(
+    task_id: String,
+    state: State<'_, AppState>,
+) -> Result<Value, String> {
+    let client = state.client().await.ok_or("server not connected")?;
+    client
+        .call("checkpoints.list", json!({ "task_id": task_id }))
+        .await
+        .map_err(|err| err.to_string())
+}
+
+/// Restores a task's worktree to a saved checkpoint (`checkpoints.restore`).
+#[tauri::command]
+pub async fn restore_checkpoint(
+    checkpoint_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let client = state.client().await.ok_or("server not connected")?;
+    client
+        .call(
+            "checkpoints.restore",
+            json!({ "checkpoint_id": checkpoint_id }),
+        )
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
