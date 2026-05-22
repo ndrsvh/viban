@@ -43,6 +43,46 @@ pub async fn is_git_repo(dir: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Returns whether `dir`'s repository has at least one commit (a valid HEAD).
+pub async fn has_head(dir: &Path) -> bool {
+    git_command()
+        .args(["rev-parse", "--verify", "--quiet", "HEAD"])
+        .current_dir(dir)
+        .output()
+        .await
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+/// Ensures `dir` is a git repository with at least one commit, creating the
+/// repository and/or an initial commit as needed. A no-op for a repo that is
+/// already set up, so it is safe to call before any worktree operation.
+pub async fn prepare_repo(dir: &Path) -> Result<()> {
+    if !is_git_repo(dir).await {
+        run_git(dir, &["init"]).await?;
+    }
+    if !has_head(dir).await {
+        ensure_git_identity(dir).await?;
+        ensure_gitignored(dir, ".viban/").await?;
+        run_git(dir, &["add", "-A"]).await?;
+        run_git(dir, &["commit", "-m", "Initial commit"]).await?;
+    }
+    Ok(())
+}
+
+/// Sets a repo-local git identity when none is configured, so the initial
+/// commit does not fail on a machine without global git config.
+async fn ensure_git_identity(dir: &Path) -> Result<()> {
+    let email = run_git(dir, &["config", "user.email"])
+        .await
+        .unwrap_or_default();
+    if email.trim().is_empty() {
+        run_git(dir, &["config", "user.email", "viban@localhost"]).await?;
+        run_git(dir, &["config", "user.name", "viban"]).await?;
+    }
+    Ok(())
+}
+
 /// Appends `entry` to the repo's `.gitignore` unless it is already listed.
 pub async fn ensure_gitignored(repo: &Path, entry: &str) -> Result<()> {
     use tokio::io::AsyncWriteExt;
