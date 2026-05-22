@@ -1,7 +1,9 @@
 //! Git operations. viban shells out to the `git` CLI — never `git2-rs`.
 
+mod diff;
 mod worktree;
 
+pub use diff::{commit_all, discard_all, worktree_diff, FileDiff, FileStatus};
 pub use worktree::{branch_delete, worktree_add, worktree_remove};
 
 use std::path::Path;

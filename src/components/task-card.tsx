@@ -9,6 +9,7 @@ interface TaskCardProps {
   task: Task;
   onOpenSession: (sessionId: string) => void;
   onStartSession: (task: Task) => void;
+  onReview: (task: Task) => void;
   onEdit: (task: Task) => void;
 }
 
@@ -17,6 +18,7 @@ export function TaskCard({
   task,
   onOpenSession,
   onStartSession,
+  onReview,
   onEdit,
 }: TaskCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
@@ -61,6 +63,11 @@ export function TaskCard({
             onClick={() => onStartSession(task)}
           >
             Start session
+          </Button>
+        )}
+        {task.worktree_path && (
+          <Button size="xs" variant="secondary" onClick={() => onReview(task)}>
+            Review
           </Button>
         )}
         <Button size="xs" variant="ghost" onClick={() => onEdit(task)}>

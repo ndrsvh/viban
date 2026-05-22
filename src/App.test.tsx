@@ -63,6 +63,26 @@ describe("App", () => {
     );
   });
 
+  it("surfaces the reason when opening a project fails", async () => {
+    const user = userEvent.setup();
+    setInvoke((command) => {
+      if (command === "current_project") return Promise.resolve(null);
+      if (command === "open_project") {
+        return Promise.reject("the selected folder is not a git repository");
+      }
+      return Promise.resolve(undefined);
+    });
+
+    render(<App />);
+    await user.click(
+      await screen.findByRole("button", { name: "Open project…" }),
+    );
+
+    expect(
+      await screen.findByText("the selected folder is not a git repository"),
+    ).toBeInTheDocument();
+  });
+
   it("shows the board with a project header once connected", async () => {
     setInvoke((command) => {
       if (command === "current_project") {

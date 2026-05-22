@@ -130,6 +130,9 @@ async fn dispatch(
         "tasks.delete" => tasks_delete(params, ctx, registry).await,
         "tasks.reorder" => tasks_reorder(params, ctx).await,
         "tasks.start_session" => tasks_start_session(params, ctx).await,
+        "git.diff" => git_diff(params, ctx).await,
+        "git.commit" => git_commit(params, ctx).await,
+        "git.restore" => git_restore(params, ctx).await,
         other => Err(RpcError::method_not_found(other)),
     }
 }
@@ -450,6 +453,92 @@ async fn agent_workdir(ctx: &Context, session_id: &str) -> Result<PathBuf, RpcEr
         .and_then(|task| task.worktree_path)
         .map(PathBuf::from)
         .unwrap_or_else(|| ctx.workspace.clone()))
+}
+
+/// Returns a task's pending worktree changes for review.
+async fn git_diff(params: Value, ctx: &Context) -> Result<Value, RpcError> {
+    let task_id = str_param(&params, "task_id")?;
+    let (_task, worktree) = task_worktree(ctx, task_id).await?;
+    let files = git::worktree_diff(&worktree)
+        .await
+        .map_err(|err| RpcError::internal(format!("failed to diff worktree: {err}")))?;
+    Ok(json!({ "files": files }))
+}
+
+/// Commits a task's worktree changes and moves the task to the Review column.
+async fn git_commit(params: Value, ctx: &Context) -> Result<Value, RpcError> {
+    let task_id = str_param(&params, "task_id")?;
+    let (mut task, worktree) = task_worktree(ctx, task_id).await?;
+    git::commit_all(&worktree, &task.title)
+        .await
+        .map_err(|err| RpcError::internal(format!("failed to commit worktree: {err}")))?;
+    move_task_to_column(ctx, &mut task, "Review").await?;
+    Ok(json!({ "ok": true }))
+}
+
+/// Discards a task's worktree changes and moves the task back to In Progress.
+async fn git_restore(params: Value, ctx: &Context) -> Result<Value, RpcError> {
+    let task_id = str_param(&params, "task_id")?;
+    let (mut task, worktree) = task_worktree(ctx, task_id).await?;
+    git::discard_all(&worktree)
+        .await
+        .map_err(|err| RpcError::internal(format!("failed to discard worktree: {err}")))?;
+    move_task_to_column(ctx, &mut task, "In Progress").await?;
+    Ok(json!({ "ok": true }))
+}
+
+/// Loads a task and the path of its git worktree, erroring if it has none.
+async fn task_worktree(ctx: &Context, task_id: &str) -> Result<(Task, PathBuf), RpcError> {
+    let task = ctx
+        .db
+        .get_task(task_id.to_string())
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+        .ok_or_else(|| RpcError::invalid_params(format!("unknown task: {task_id}")))?;
+    let worktree = task
+        .worktree_path
+        .clone()
+        .ok_or_else(|| RpcError::invalid_params(format!("task {task_id} has no worktree")))?;
+    Ok((task, PathBuf::from(worktree)))
+}
+
+/// Moves `task` to the end of the board column named `column_name`.
+async fn move_task_to_column(
+    ctx: &Context,
+    task: &mut Task,
+    column_name: &str,
+) -> Result<(), RpcError> {
+    let board = ctx
+        .db
+        .get_board()
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+        .ok_or_else(|| RpcError::internal("no board exists"))?;
+    let columns = ctx
+        .db
+        .list_columns(board.id.clone())
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+    let column = columns
+        .iter()
+        .find(|column| column.name == column_name)
+        .ok_or_else(|| RpcError::internal(format!("no column named {column_name}")))?;
+    let position = ctx
+        .db
+        .list_tasks(board.id)
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+        .iter()
+        .filter(|other| other.column_id == column.id && other.id != task.id)
+        .count() as i64;
+
+    task.column_id = column.id.clone();
+    task.position = position;
+    ctx.db
+        .update_task(task.clone())
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+    Ok(())
 }
 
 /// Applies a column's full task ordering (also re-parents moved tasks).
