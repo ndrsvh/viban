@@ -70,6 +70,21 @@ pub async fn prepare_repo(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Merges `branch` into the current branch of `repo`. On conflict (or any
+/// other failure) the partial merge is aborted so the repository is left
+/// clean, and the error is returned.
+pub async fn merge_branch(repo: &Path, branch: &str) -> Result<()> {
+    match run_git(repo, &["merge", "--no-edit", branch]).await {
+        Ok(_) => Ok(()),
+        Err(err) => {
+            // Undo the partial merge; ignore the abort's own result since
+            // there may be nothing to abort.
+            let _ = run_git(repo, &["merge", "--abort"]).await;
+            Err(err.context(format!("failed to merge {branch}")))
+        }
+    }
+}
+
 /// Sets a repo-local git identity when none is configured, so the initial
 /// commit does not fail on a machine without global git config.
 async fn ensure_git_identity(dir: &Path) -> Result<()> {
