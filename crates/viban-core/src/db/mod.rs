@@ -395,7 +395,7 @@ mod tests {
             .expect("query migration versions");
         assert_eq!(
             versions,
-            vec![1, 2, 3, 4, 5, 6],
+            vec![1, 2, 3, 4, 5, 6, 7],
             "all migrations are recorded"
         );
     }

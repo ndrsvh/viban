@@ -103,6 +103,20 @@ CREATE TABLE session_usage (
 );
 ";
 
+/// Migration 7 — checkpoints: saved worktree commits the user can roll back
+/// to, one row per checkpoint of a task.
+pub const MIGRATION_7: &str = "
+CREATE TABLE checkpoints (
+    id         TEXT PRIMARY KEY,
+    task_id    TEXT NOT NULL REFERENCES tasks(id),
+    commit_sha TEXT NOT NULL,
+    label      TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX idx_checkpoints_task ON checkpoints (task_id, created_at);
+";
+
 /// Every migration, in application order. A migration's version is its
 /// 1-based index in this list.
 pub const MIGRATIONS: &[&str] = &[
@@ -112,4 +126,5 @@ pub const MIGRATIONS: &[&str] = &[
     MIGRATION_4,
     MIGRATION_5,
     MIGRATION_6,
+    MIGRATION_7,
 ];

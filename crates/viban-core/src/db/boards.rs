@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use tokio_rusqlite::rusqlite::{self, params, OptionalExtension};
 
 use super::Db;
-use crate::types::{Attempt, Board, Column, Task};
+use crate::types::{Attempt, Board, Checkpoint, Column, Task};
 
 /// The default columns created with a fresh board.
 const DEFAULT_COLUMNS: [&str; 4] = ["Backlog", "In Progress", "Review", "Done"];
@@ -302,6 +302,62 @@ impl Db {
             .await
             .context("failed to get attempt by session")
     }
+
+    /// Records a saved worktree checkpoint for a task.
+    pub async fn create_checkpoint(&self, checkpoint: Checkpoint) -> Result<()> {
+        self.conn
+            .call(move |conn| -> rusqlite::Result<()> {
+                conn.execute(
+                    "INSERT INTO checkpoints \
+                     (id, task_id, commit_sha, label, created_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        checkpoint.id,
+                        checkpoint.task_id,
+                        checkpoint.commit_sha,
+                        checkpoint.label,
+                        checkpoint.created_at,
+                    ],
+                )?;
+                Ok(())
+            })
+            .await
+            .context("failed to create checkpoint")?;
+        Ok(())
+    }
+
+    /// Lists a task's checkpoints, oldest first.
+    pub async fn list_checkpoints(&self, task_id: String) -> Result<Vec<Checkpoint>> {
+        self.conn
+            .call(move |conn| -> rusqlite::Result<Vec<Checkpoint>> {
+                let mut stmt = conn.prepare(
+                    "SELECT id, task_id, commit_sha, label, created_at \
+                     FROM checkpoints WHERE task_id = ?1 ORDER BY created_at, id",
+                )?;
+                let rows = stmt
+                    .query_map(params![task_id], row_to_checkpoint)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await
+            .context("failed to list checkpoints")
+    }
+
+    /// Fetches a single checkpoint by id.
+    pub async fn get_checkpoint(&self, checkpoint_id: String) -> Result<Option<Checkpoint>> {
+        self.conn
+            .call(move |conn| -> rusqlite::Result<Option<Checkpoint>> {
+                conn.query_row(
+                    "SELECT id, task_id, commit_sha, label, created_at \
+                     FROM checkpoints WHERE id = ?1",
+                    params![checkpoint_id],
+                    row_to_checkpoint,
+                )
+                .optional()
+            })
+            .await
+            .context("failed to get checkpoint")
+    }
 }
 
 fn default_board_name(project_path: &str) -> String {
@@ -355,6 +411,16 @@ fn row_to_attempt(row: &rusqlite::Row<'_>) -> rusqlite::Result<Attempt> {
     })
 }
 
+fn row_to_checkpoint(row: &rusqlite::Row<'_>) -> rusqlite::Result<Checkpoint> {
+    Ok(Checkpoint {
+        id: row.get(0)?,
+        task_id: row.get(1)?,
+        commit_sha: row.get(2)?,
+        label: row.get(3)?,
+        created_at: row.get(4)?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,6 +437,59 @@ mod tests {
         assert_eq!(columns.len(), 4);
         assert_eq!(columns[0].name, "Backlog");
         assert_eq!(columns[3].name, "Done");
+    }
+
+    #[tokio::test]
+    async fn checkpoints_round_trip_and_order_by_creation() {
+        let db = Db::open_in_memory().await.expect("open");
+        let board = db.ensure_default_board("/tmp/proj").await.expect("board");
+        let columns = db.list_columns(board.id).await.expect("columns");
+        db.create_task(Task {
+            id: "t1".into(),
+            column_id: columns[0].id.clone(),
+            title: "Task".into(),
+            description: String::new(),
+            position: 0,
+            session_id: None,
+            worktree_path: None,
+            branch: None,
+            created_at: 0,
+        })
+        .await
+        .expect("create task");
+
+        for (id, sha, label, created) in [
+            ("c1", "sha-one", "before refactor", 10),
+            ("c2", "sha-two", "after refactor", 20),
+        ] {
+            db.create_checkpoint(Checkpoint {
+                id: id.into(),
+                task_id: "t1".into(),
+                commit_sha: sha.into(),
+                label: label.into(),
+                created_at: created,
+            })
+            .await
+            .expect("create checkpoint");
+        }
+
+        let checkpoints = db.list_checkpoints("t1".into()).await.expect("list");
+        assert_eq!(checkpoints.len(), 2);
+        assert_eq!(checkpoints[0].id, "c1", "oldest checkpoint first");
+        assert_eq!(checkpoints[1].label, "after refactor");
+
+        let fetched = db
+            .get_checkpoint("c2".into())
+            .await
+            .expect("get_checkpoint")
+            .expect("checkpoint exists");
+        assert_eq!(fetched.commit_sha, "sha-two");
+
+        assert!(db
+            .list_checkpoints("other".into())
+            .await
+            .expect("list")
+            .is_empty());
     }
 
     #[tokio::test]

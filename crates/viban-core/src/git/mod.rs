@@ -1,8 +1,10 @@
 //! Git operations. viban shells out to the `git` CLI — never `git2-rs`.
 
+mod checkpoint;
 mod diff;
 mod worktree;
 
+pub use checkpoint::{create_checkpoint, restore_checkpoint};
 pub use diff::{commit_all, discard_all, worktree_diff, FileDiff, FileStatus};
 pub use worktree::{branch_delete, worktree_add, worktree_remove};
 

@@ -367,6 +367,44 @@ async fn prepare_repo_is_a_noop_for_a_ready_repository() {
 }
 
 #[tokio::test]
+async fn checkpoint_captures_and_restores_the_worktree() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    init_repo(root);
+
+    // The agent adds a file and edits the tracked one.
+    std::fs::write(root.join("new.txt"), "v1\n").expect("write new");
+    std::fs::write(root.join("file.txt"), "edited\n").expect("edit file");
+    let sha = git::create_checkpoint(root, "first")
+        .await
+        .expect("create checkpoint");
+    assert!(!sha.is_empty(), "the checkpoint has a commit sha");
+
+    // More changes happen after the checkpoint.
+    std::fs::write(root.join("new.txt"), "v2\n").expect("rewrite");
+    std::fs::write(root.join("later.txt"), "junk\n").expect("write later");
+
+    git::restore_checkpoint(root, &sha)
+        .await
+        .expect("restore checkpoint");
+
+    // The worktree is back at the checkpoint.
+    assert_eq!(
+        std::fs::read_to_string(root.join("new.txt")).expect("read"),
+        "v1\n",
+        "a tracked file is rewound"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("file.txt")).expect("read"),
+        "edited\n"
+    );
+    assert!(
+        !root.join("later.txt").exists(),
+        "a file created after the checkpoint is removed"
+    );
+}
+
+#[tokio::test]
 async fn merge_branch_brings_in_the_branch_commits() {
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path();

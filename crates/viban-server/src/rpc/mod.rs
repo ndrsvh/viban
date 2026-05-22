@@ -11,6 +11,7 @@
 //! into an internal `RpcError` via `?` (see the `From` impl below).
 
 mod attempts;
+mod checkpoints;
 mod events;
 mod review;
 mod sessions;
@@ -163,6 +164,9 @@ async fn dispatch(method: &str, params: Value, ctx: &Context) -> Result<Value, R
         "git.commit" => review::commit(params, ctx).await,
         "git.restore" => review::restore(params, ctx).await,
         "git.merge" => review::merge(params, ctx).await,
+        "checkpoints.create" => checkpoints::create(params, ctx).await,
+        "checkpoints.list" => checkpoints::list(params, ctx).await,
+        "checkpoints.restore" => checkpoints::restore(params, ctx).await,
         other => Err(RpcError::method_not_found(other)),
     }
 }
