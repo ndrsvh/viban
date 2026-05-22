@@ -30,3 +30,69 @@ pub enum AgentEvent {
     /// An unclassified event, passed through verbatim.
     Raw { payload: Value },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn session_started_serializes_with_a_snake_case_tag() {
+        let event = AgentEvent::SessionStarted {
+            session_id: "abc".into(),
+        };
+        let value = serde_json::to_value(&event).expect("to_value");
+        assert_eq!(value["type"], "session_started");
+        assert_eq!(value["session_id"], "abc");
+    }
+
+    #[test]
+    fn every_variant_carries_the_expected_type_tag() {
+        let cases: [(AgentEvent, &str); 5] = [
+            (
+                AgentEvent::AssistantText { text: "x".into() },
+                "assistant_text",
+            ),
+            (
+                AgentEvent::ToolUse {
+                    name: "Read".into(),
+                    input: json!({}),
+                },
+                "tool_use",
+            ),
+            (AgentEvent::Result { is_error: true }, "result"),
+            (
+                AgentEvent::Error {
+                    message: "boom".into(),
+                },
+                "error",
+            ),
+            (
+                AgentEvent::Raw {
+                    payload: json!({ "k": 1 }),
+                },
+                "raw",
+            ),
+        ];
+        for (event, tag) in cases {
+            let value = serde_json::to_value(&event).expect("to_value");
+            assert_eq!(value["type"], tag, "wrong tag for {event:?}");
+        }
+    }
+
+    #[test]
+    fn tool_use_round_trips_through_json() {
+        let event = AgentEvent::ToolUse {
+            name: "Edit".into(),
+            input: json!({ "path": "a.txt" }),
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        match serde_json::from_str::<AgentEvent>(&json).expect("deserialize") {
+            AgentEvent::ToolUse { name, input } => {
+                assert_eq!(name, "Edit");
+                assert_eq!(input["path"], "a.txt");
+            }
+            other => panic!("expected ToolUse, got {other:?}"),
+        }
+    }
+}

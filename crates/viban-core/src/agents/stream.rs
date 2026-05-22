@@ -115,4 +115,85 @@ mod tests {
             other => panic!("expected Result, got {other:?}"),
         }
     }
+
+    #[test]
+    fn invalid_json_becomes_an_error_event() {
+        match parse_line("this is not json") {
+            AgentEvent::Error { message } => {
+                assert!(message.contains("invalid agent output"), "got: {message}");
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn assistant_tool_use_block_is_classified() {
+        let line = r#"{"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":"Read","input":{"file":"a.txt"}}]}}"#;
+        match parse_line(line) {
+            AgentEvent::ToolUse { name, input } => {
+                assert_eq!(name, "Read");
+                assert_eq!(input["file"], "a.txt");
+            }
+            other => panic!("expected ToolUse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn assistant_concatenates_multiple_text_blocks() {
+        let line = r#"{"type":"assistant","message":{"content":[
+            {"type":"text","text":"foo "},{"type":"text","text":"bar"}]}}"#;
+        match parse_line(line) {
+            AgentEvent::AssistantText { text } => assert_eq!(text, "foo bar"),
+            other => panic!("expected AssistantText, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn assistant_without_content_is_raw() {
+        match parse_line(r#"{"type":"assistant","message":{}}"#) {
+            AgentEvent::Raw { .. } => {}
+            other => panic!("expected Raw, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn system_without_init_subtype_is_raw() {
+        match parse_line(r#"{"type":"system","subtype":"other"}"#) {
+            AgentEvent::Raw { .. } => {}
+            other => panic!("expected Raw, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn init_without_session_id_is_raw() {
+        match parse_line(r#"{"type":"system","subtype":"init"}"#) {
+            AgentEvent::Raw { .. } => {}
+            other => panic!("expected Raw, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn result_defaults_is_error_to_false_when_absent() {
+        match parse_line(r#"{"type":"result"}"#) {
+            AgentEvent::Result { is_error } => assert!(!is_error),
+            other => panic!("expected Result, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn result_reports_a_true_error_flag() {
+        match parse_line(r#"{"type":"result","is_error":true}"#) {
+            AgentEvent::Result { is_error } => assert!(is_error),
+            other => panic!("expected Result, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn json_without_a_type_field_is_raw() {
+        match parse_line(r#"{"hello":"world"}"#) {
+            AgentEvent::Raw { payload } => assert_eq!(payload["hello"], "world"),
+            other => panic!("expected Raw, got {other:?}"),
+        }
+    }
 }

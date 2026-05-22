@@ -115,4 +115,29 @@ mod tests {
         assert_eq!(slugify("  Fix: the bug!! "), "fix-the-bug");
         assert_eq!(slugify("***"), "task");
     }
+
+    #[test]
+    fn slugify_falls_back_for_empty_or_symbol_only_input() {
+        assert_eq!(slugify(""), "task");
+        assert_eq!(slugify("   "), "task");
+        assert_eq!(slugify("!@#$%"), "task");
+    }
+
+    #[test]
+    fn slugify_collapses_runs_of_separators_into_single_dashes() {
+        assert_eq!(slugify("a---b__c  d"), "a-b-c-d");
+        assert_eq!(slugify("Trailing dashes!!!"), "trailing-dashes");
+    }
+
+    #[test]
+    fn slugify_lowercases_and_keeps_ascii_alphanumerics() {
+        assert_eq!(slugify("MixedCase"), "mixedcase");
+        assert_eq!(slugify("Hello, World 2024"), "hello-world-2024");
+    }
+
+    #[test]
+    fn slugify_caps_length_at_forty_characters() {
+        let slug = slugify(&"word ".repeat(40));
+        assert!(slug.len() <= 40, "slug was {} chars", slug.len());
+    }
 }

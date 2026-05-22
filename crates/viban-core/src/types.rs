@@ -67,3 +67,107 @@ pub struct Task {
     pub branch: Option<String>,
     pub created_at: i64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_round_trips_through_json() {
+        let task = Task {
+            id: "t1".into(),
+            column_id: "c1".into(),
+            title: "Title".into(),
+            description: "Desc".into(),
+            position: 3,
+            session_id: Some("s1".into()),
+            worktree_path: Some("/tmp/wt".into()),
+            branch: Some("viban/x".into()),
+            created_at: 42,
+        };
+        let json = serde_json::to_string(&task).expect("serialize");
+        let back: Task = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.id, task.id);
+        assert_eq!(back.position, 3);
+        assert_eq!(back.session_id.as_deref(), Some("s1"));
+        assert_eq!(back.worktree_path.as_deref(), Some("/tmp/wt"));
+        assert_eq!(back.branch.as_deref(), Some("viban/x"));
+    }
+
+    #[test]
+    fn task_optional_fields_serialize_as_null() {
+        let task = Task {
+            id: "t".into(),
+            column_id: "c".into(),
+            title: "x".into(),
+            description: String::new(),
+            position: 0,
+            session_id: None,
+            worktree_path: None,
+            branch: None,
+            created_at: 0,
+        };
+        let value = serde_json::to_value(&task).expect("to_value");
+        assert!(value["session_id"].is_null());
+        assert!(value["worktree_path"].is_null());
+        assert!(value["branch"].is_null());
+    }
+
+    #[test]
+    fn session_round_trips_through_json() {
+        let session = Session {
+            id: "s".into(),
+            claude_session_id: Some("claude-1".into()),
+            title: "t".into(),
+            created_at: 1,
+            project_path: "/p".into(),
+        };
+        let back: Session =
+            serde_json::from_str(&serde_json::to_string(&session).expect("serialize"))
+                .expect("deserialize");
+        assert_eq!(back.id, "s");
+        assert_eq!(back.claude_session_id.as_deref(), Some("claude-1"));
+    }
+
+    #[test]
+    fn board_and_column_round_trip_through_json() {
+        let board = Board {
+            id: "b".into(),
+            name: "n".into(),
+            project_path: "/p".into(),
+            created_at: 2,
+        };
+        let back: Board = serde_json::from_str(&serde_json::to_string(&board).expect("serialize"))
+            .expect("deserialize");
+        assert_eq!(back.name, "n");
+
+        let column = Column {
+            id: "c".into(),
+            board_id: "b".into(),
+            name: "Backlog".into(),
+            position: 1,
+        };
+        let back: Column =
+            serde_json::from_str(&serde_json::to_string(&column).expect("serialize"))
+                .expect("deserialize");
+        assert_eq!(back.position, 1);
+        assert_eq!(back.board_id, "b");
+    }
+
+    #[test]
+    fn message_round_trips_through_json() {
+        let message = Message {
+            id: "m".into(),
+            session_id: "s".into(),
+            role: "assistant".into(),
+            content: "hello".into(),
+            created_at: 3,
+            raw_json: Some("{\"k\":1}".into()),
+        };
+        let back: Message =
+            serde_json::from_str(&serde_json::to_string(&message).expect("serialize"))
+                .expect("deserialize");
+        assert_eq!(back.role, "assistant");
+        assert_eq!(back.raw_json.as_deref(), Some("{\"k\":1}"));
+    }
+}
