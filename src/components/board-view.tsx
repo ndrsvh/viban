@@ -124,9 +124,12 @@ export function BoardView({ onOpenSession }: BoardViewProps) {
   }
 
   async function handleStartSession(task: Task) {
-    const sessionId = crypto.randomUUID();
     try {
-      await invoke("update_task", { taskId: task.id, sessionId });
+      // The server creates the worktree + branch and links a session.
+      const sessionId = await invoke<string>("start_session", {
+        taskId: task.id,
+      });
+      await loadBoard();
       onOpenSession(sessionId);
     } catch (err) {
       console.error(err);

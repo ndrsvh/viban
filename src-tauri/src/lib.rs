@@ -65,6 +65,7 @@ pub fn run() {
             commands::close_session,
             commands::spawn_session,
             commands::send_message,
+            commands::start_session,
             commands::list_sessions,
             commands::get_session,
             commands::get_board,

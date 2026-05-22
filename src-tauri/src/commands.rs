@@ -130,6 +130,22 @@ pub async fn send_message(
     Ok(())
 }
 
+/// Creates a git worktree + branch for a task and links a fresh session to
+/// it, returning the new session id (`tasks.start_session`).
+#[tauri::command]
+pub async fn start_session(task_id: String, state: State<'_, AppState>) -> Result<String, String> {
+    let client = state.client().await.ok_or("server not connected")?;
+    let result = client
+        .call("tasks.start_session", json!({ "task_id": task_id }))
+        .await
+        .map_err(|err| err.to_string())?;
+    result
+        .get("session_id")
+        .and_then(Value::as_str)
+        .map(String::from)
+        .ok_or_else(|| "server did not return a session id".to_string())
+}
+
 /// Lists every persisted session (`{ "sessions": [...] }`).
 #[tauri::command]
 pub async fn list_sessions(state: State<'_, AppState>) -> Result<Value, String> {

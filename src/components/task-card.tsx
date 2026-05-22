@@ -40,6 +40,11 @@ export function TaskCard({
           {task.description}
         </p>
       )}
+      {task.branch && (
+        <p className="mt-1.5 truncate font-mono text-[11px] text-muted-foreground">
+          ⎇ {task.branch}
+        </p>
+      )}
       <div className="mt-2 flex gap-1">
         {sessionId ? (
           <Button

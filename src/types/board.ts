@@ -22,5 +22,7 @@ export interface Task {
   description: string;
   position: number;
   session_id: string | null;
+  worktree_path: string | null;
+  branch: string | null;
   created_at: number;
 }
