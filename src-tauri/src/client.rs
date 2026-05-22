@@ -150,3 +150,33 @@ fn extract_result(value: &Value) -> Result<Value> {
     }
     Ok(value.get("result").cloned().unwrap_or(Value::Null))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::extract_result;
+    use serde_json::json;
+
+    #[test]
+    fn extract_result_returns_the_result_payload() {
+        let value = json!({ "jsonrpc": "2.0", "id": 1, "result": { "ok": true } });
+        let result = extract_result(&value).expect("a result");
+        assert_eq!(result["ok"], true);
+    }
+
+    #[test]
+    fn extract_result_defaults_a_missing_result_to_null() {
+        let value = json!({ "jsonrpc": "2.0", "id": 1 });
+        assert!(extract_result(&value).expect("a result").is_null());
+    }
+
+    #[test]
+    fn extract_result_surfaces_a_server_error() {
+        let value = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": { "code": -32601, "message": "method not found" },
+        });
+        let error = extract_result(&value).expect_err("an error");
+        assert!(error.to_string().contains("server error"));
+    }
+}
