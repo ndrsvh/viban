@@ -500,6 +500,20 @@ in a `session_files` table — durable, so the footprint survives a restart.
 also grows the list live from the `tool_use` events it already receives, so
 no extra subscription is needed.
 
+### Run a command in a worktree
+
+The diff-review surface can run an arbitrary shell command in the task's
+worktree — `cargo test`, `npm run lint`, … — so the agent's changes can be
+verified before they are accepted or merged. For a no-git task the command
+runs in the project folder.
+
+`viban-core::exec::run_command` spawns the command through the platform shell
+(`sh -c` / `cmd /C`) and streams `CommandOutput` — each stdout/stderr line,
+then the exit code. `tasks.run_command { task_id, command }` runs it and
+forwards the stream on the **`run:<task_id>`** notification topic, so a long
+command never blocks the JSON-RPC loop. The DiffView subscribes to that topic
+while it is shown and renders the output.
+
 ## Coding conventions
 
 ### Rust
