@@ -3,6 +3,7 @@ import { MergeView } from "@codemirror/merge";
 import { EditorState } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 
+import { RunPanel } from "@/components/run-panel";
 import { Button } from "@/components/ui/button";
 import { rpc } from "@/lib/rpc";
 import { cn } from "@/lib/utils";
@@ -198,6 +199,8 @@ export function DiffView({ task, onDone }: DiffViewProps) {
           )}
         </main>
       </div>
+
+      <RunPanel taskId={task.id} />
     </div>
   );
 }

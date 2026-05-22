@@ -6,6 +6,7 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 use tokio::sync::oneshot;
+use viban_core::exec::CommandOutput;
 use viban_core::types::TaskStatusUpdate;
 use viban_core::AgentEvent;
 
@@ -122,6 +123,58 @@ pub async fn watch_task_status(
 pub async fn unwatch_task_status(state: State<'_, AppState>) -> Result<(), String> {
     if let Some(client) = state.client().await {
         client.unsubscribe("tasks").await;
+    }
+    Ok(())
+}
+
+/// Runs a shell command in a task's worktree (`tasks.run_command`). Output
+/// streams on the `run:<task_id>` topic — subscribe with `watch_run` first.
+#[tauri::command]
+pub async fn run_command(
+    task_id: String,
+    command: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let client = state.client().await.ok_or("server not connected")?;
+    client
+        .call(
+            "tasks.run_command",
+            json!({ "task_id": task_id, "command": command }),
+        )
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+/// Subscribes `on_event` to a task's command-run output (`run:<task_id>`).
+#[tauri::command]
+pub async fn watch_run(
+    task_id: String,
+    on_event: Channel<CommandOutput>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let client = state.client().await.ok_or("server not connected")?;
+    let mut events = client.subscribe(&format!("run:{task_id}")).await;
+    tauri::async_runtime::spawn(async move {
+        while let Some(value) = events.recv().await {
+            match serde_json::from_value::<CommandOutput>(value) {
+                Ok(output) => {
+                    if on_event.send(output).is_err() {
+                        break;
+                    }
+                }
+                Err(err) => tracing::warn!(%err, "dropping malformed command output"),
+            }
+        }
+    });
+    Ok(())
+}
+
+/// Stops forwarding a task's command-run output.
+#[tauri::command]
+pub async fn unwatch_run(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    if let Some(client) = state.client().await {
+        client.unsubscribe(&format!("run:{task_id}")).await;
     }
     Ok(())
 }

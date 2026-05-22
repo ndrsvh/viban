@@ -9,6 +9,10 @@ import type { FileDiff } from "@/types/diff";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
+  // The run panel constructs an event Channel for command output.
+  Channel: class {
+    onmessage: ((message: unknown) => void) | null = null;
+  },
 }));
 
 // CodeMirror's MergeView needs real layout; stub it so tests stay in jsdom.
