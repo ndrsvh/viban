@@ -11,11 +11,12 @@ describe("GitInitDialog", () => {
         open={false}
         busy={false}
         onConfirm={vi.fn()}
+        onWorkWithoutGit={vi.fn()}
         onOpenChange={vi.fn()}
       />,
     );
     expect(
-      screen.queryByText("Initialize a git repository?"),
+      screen.queryByText("Set up git for this project?"),
     ).not.toBeInTheDocument();
   });
 
@@ -27,11 +28,30 @@ describe("GitInitDialog", () => {
         open
         busy={false}
         onConfirm={onConfirm}
+        onWorkWithoutGit={vi.fn()}
         onOpenChange={vi.fn()}
       />,
     );
     await user.click(screen.getByRole("button", { name: "Initialize git" }));
     expect(onConfirm).toHaveBeenCalled();
+  });
+
+  it("starts a session without git", async () => {
+    const user = userEvent.setup();
+    const onWorkWithoutGit = vi.fn();
+    render(
+      <GitInitDialog
+        open
+        busy={false}
+        onConfirm={vi.fn()}
+        onWorkWithoutGit={onWorkWithoutGit}
+        onOpenChange={vi.fn()}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Work without Git" }),
+    );
+    expect(onWorkWithoutGit).toHaveBeenCalled();
   });
 
   it("cancels via the cancel button", async () => {
@@ -42,6 +62,7 @@ describe("GitInitDialog", () => {
         open
         busy={false}
         onConfirm={vi.fn()}
+        onWorkWithoutGit={vi.fn()}
         onOpenChange={onOpenChange}
       />,
     );
@@ -49,12 +70,21 @@ describe("GitInitDialog", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it("disables both buttons while initialization is running", () => {
+  it("disables every button while an action is running", () => {
     render(
-      <GitInitDialog open busy onConfirm={vi.fn()} onOpenChange={vi.fn()} />,
+      <GitInitDialog
+        open
+        busy
+        onConfirm={vi.fn()}
+        onWorkWithoutGit={vi.fn()}
+        onOpenChange={vi.fn()}
+      />,
     );
     expect(
       screen.getByRole("button", { name: "Initializing…" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Work without Git" }),
     ).toBeDisabled();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
   });

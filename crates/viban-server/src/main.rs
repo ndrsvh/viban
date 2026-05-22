@@ -4,6 +4,7 @@
 //! a remote host in later phases. It owns no UI and no Tauri code.
 
 mod auth;
+mod paths;
 mod rpc;
 mod ws;
 
@@ -24,6 +25,11 @@ struct Args {
     /// Filesystem path of the workspace this server operates on.
     #[arg(long)]
     workspace: PathBuf,
+
+    /// Base directory for viban's own data (database, worktrees). Defaults to
+    /// the OS local data directory. viban never writes into the workspace.
+    #[arg(long)]
+    data_dir: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -42,22 +48,17 @@ async fn main() -> Result<()> {
     let token = std::env::var("VIBAN_AUTH_TOKEN")
         .context("VIBAN_AUTH_TOKEN environment variable must be set")?;
 
-    let db_dir = args.workspace.join(".viban");
-    std::fs::create_dir_all(&db_dir).context("failed to create .viban directory")?;
-    let db = viban_core::db::Db::open(&db_dir.join("viban.db"))
+    // viban's data lives outside the workspace, so a cloud-synced project
+    // folder cannot lock the database (ADR-0003).
+    let data_dir = paths::project_data_dir(args.data_dir.as_deref(), &args.workspace)
+        .context("failed to resolve the data directory")?;
+    std::fs::create_dir_all(&data_dir).context("failed to create the data directory")?;
+    let db = viban_core::db::Db::open(&data_dir.join("viban.db"))
         .await
         .context("failed to open the database")?;
     db.ensure_default_board(&args.workspace.to_string_lossy())
         .await
         .context("failed to ensure the default board")?;
-
-    // Keep the project repo clean: viban's worktrees and database live under
-    // `.viban/`, which should never be committed to the user's project.
-    if viban_core::git::is_git_repo(&args.workspace).await {
-        if let Err(err) = viban_core::git::ensure_gitignored(&args.workspace, ".viban/").await {
-            tracing::warn!(%err, "failed to update .gitignore");
-        }
-    }
 
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", args.port))
         .await
@@ -75,7 +76,12 @@ async fn main() -> Result<()> {
         stdout.flush()?;
     }
 
-    tracing::info!(port, workspace = %args.workspace.display(), "viban-server listening");
+    tracing::info!(
+        port,
+        workspace = %args.workspace.display(),
+        data_dir = %data_dir.display(),
+        "viban-server listening"
+    );
 
-    ws::serve(listener, token, args.workspace, db).await
+    ws::serve(listener, token, args.workspace, data_dir, db).await
 }

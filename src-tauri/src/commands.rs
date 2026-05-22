@@ -128,40 +128,40 @@ pub async fn send_message(
     Ok(())
 }
 
-/// Creates a git worktree + branch for a task and links a fresh session to it
-/// (`tasks.start_session`). Returns `{ session_id }` on success, or
-/// `{ needs_git_init: true }` when the project folder must first be made a git
-/// repository — pass `init_git: true` to confirm and retry.
+/// Starts a task's first session (`tasks.start_session`). Returns
+/// `{ session_id }` on success, or `{ needs_git_init: true }` when the project
+/// folder must first be made a git repository. Pass `init_git: true` to
+/// confirm initializing it, or `without_git: true` to run the agent directly
+/// in the project folder with no worktree.
 #[tauri::command]
 pub async fn start_session(
     task_id: String,
     init_git: Option<bool>,
+    without_git: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<Value, String> {
     let client = state.client().await.ok_or("server not connected")?;
     client
         .call(
             "tasks.start_session",
-            json!({ "task_id": task_id, "init_git": init_git.unwrap_or(false) }),
+            json!({
+                "task_id": task_id,
+                "init_git": init_git.unwrap_or(false),
+                "without_git": without_git.unwrap_or(false),
+            }),
         )
         .await
         .map_err(|err| err.to_string())
 }
 
-/// Starts an additional attempt for a task (`attempts.create`). Returns the
-/// raw result — `{ session_id }` or `{ needs_git_init: true }`.
+/// Starts an additional attempt for a task (`attempts.create`). The attempt
+/// matches the task's mode — a git worktree when the project is a repository,
+/// otherwise a plain session. Returns `{ session_id }`.
 #[tauri::command]
-pub async fn create_attempt(
-    task_id: String,
-    init_git: Option<bool>,
-    state: State<'_, AppState>,
-) -> Result<Value, String> {
+pub async fn create_attempt(task_id: String, state: State<'_, AppState>) -> Result<Value, String> {
     let client = state.client().await.ok_or("server not connected")?;
     client
-        .call(
-            "attempts.create",
-            json!({ "task_id": task_id, "init_git": init_git.unwrap_or(false) }),
-        )
+        .call("attempts.create", json!({ "task_id": task_id }))
         .await
         .map_err(|err| err.to_string())
 }

@@ -6,7 +6,7 @@ mod worktree;
 pub use diff::{commit_all, discard_all, worktree_diff, FileDiff, FileStatus};
 pub use worktree::{branch_delete, worktree_add, worktree_remove};
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use tokio::process::Command;
@@ -43,6 +43,27 @@ pub async fn is_git_repo(dir: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Returns whether `dir` is itself the top level of a git repository — as
+/// opposed to merely sitting *inside* an ancestor repository.
+///
+/// viban needs the project folder to be its own repo: a worktree branches off
+/// its containing repo's HEAD, so a folder that is just a subdirectory of some
+/// outer repo would otherwise spawn worktrees of that whole outer repo.
+pub async fn is_repo_root(dir: &Path) -> bool {
+    let Ok(toplevel) = run_git(dir, &["rev-parse", "--show-toplevel"]).await else {
+        return false;
+    };
+    // `git` and `std` may spell the same path differently (slashes, casing,
+    // `\\?\` prefixes) — canonicalize both sides before comparing.
+    let Ok(toplevel) = PathBuf::from(toplevel.trim()).canonicalize() else {
+        return false;
+    };
+    let Ok(dir) = dir.canonicalize() else {
+        return false;
+    };
+    toplevel == dir
+}
+
 /// Returns whether `dir`'s repository has at least one commit (a valid HEAD).
 pub async fn has_head(dir: &Path) -> bool {
     git_command()
@@ -57,15 +78,21 @@ pub async fn has_head(dir: &Path) -> bool {
 /// Ensures `dir` is a git repository with at least one commit, creating the
 /// repository and/or an initial commit as needed. A no-op for a repo that is
 /// already set up, so it is safe to call before any worktree operation.
+///
+/// If `dir` only sits inside an outer repository, a dedicated repository is
+/// initialized for it so its worktrees branch off the right history.
+///
+/// viban keeps its own data outside the project (ADR-0003), so this writes
+/// nothing into the repo beyond the initial commit of the user's own files.
 pub async fn prepare_repo(dir: &Path) -> Result<()> {
-    if !is_git_repo(dir).await {
+    if !is_repo_root(dir).await {
         run_git(dir, &["init"]).await?;
     }
     if !has_head(dir).await {
         ensure_git_identity(dir).await?;
-        ensure_gitignored(dir, ".viban/").await?;
         run_git(dir, &["add", "-A"]).await?;
-        run_git(dir, &["commit", "-m", "Initial commit"]).await?;
+        // `--allow-empty` so an empty folder still gets a HEAD for worktrees.
+        run_git(dir, &["commit", "--allow-empty", "-m", "Initial commit"]).await?;
     }
     Ok(())
 }
@@ -87,12 +114,21 @@ pub async fn merge_branch(repo: &Path, branch: &str) -> Result<()> {
 
 /// Sets a repo-local git identity when none is configured, so the initial
 /// commit does not fail on a machine without global git config.
+///
+/// `user.name` and `user.email` are checked independently: a machine may have
+/// one set globally but not the other, and `git commit` fails unless *both*
+/// resolve.
 async fn ensure_git_identity(dir: &Path) -> Result<()> {
     let email = run_git(dir, &["config", "user.email"])
         .await
         .unwrap_or_default();
     if email.trim().is_empty() {
         run_git(dir, &["config", "user.email", "viban@localhost"]).await?;
+    }
+    let name = run_git(dir, &["config", "user.name"])
+        .await
+        .unwrap_or_default();
+    if name.trim().is_empty() {
         run_git(dir, &["config", "user.name", "viban"]).await?;
     }
     Ok(())

@@ -78,12 +78,10 @@ async fn worktree_lifecycle() {
         "a second start returns the existing session"
     );
 
-    // The server appended `.viban/` to the project's .gitignore.
-    let gitignore =
-        std::fs::read_to_string(server.workspace().join(".gitignore")).unwrap_or_default();
+    // viban keeps nothing in the project folder — not even a .viban directory.
     assert!(
-        gitignore.lines().any(|line| line.trim() == ".viban/"),
-        ".viban/ is gitignored:\n{gitignore}"
+        !server.workspace().join(".viban").exists(),
+        "the project folder stays free of viban's data"
     );
 
     // Delete the task: the worktree and branch must be torn down.

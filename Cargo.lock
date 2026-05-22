@@ -4306,6 +4306,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "dirs",
  "futures-util",
  "serde",
  "serde_json",

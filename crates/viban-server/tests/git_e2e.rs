@@ -185,6 +185,59 @@ async fn start_session_with_init_git_initializes_the_repo_and_worktree() {
 }
 
 #[tokio::test]
+async fn start_session_without_git_runs_in_the_project_folder() {
+    let mut server = TestServer::start_without_git().await;
+    let column_id = server.first_column_id().await;
+    let created = server
+        .call(
+            "tasks.create",
+            json!({ "column_id": column_id, "title": "Plain task" }),
+        )
+        .await;
+    let task_id = created["task"]["id"]
+        .as_str()
+        .expect("a task id")
+        .to_string();
+
+    let result = server
+        .call(
+            "tasks.start_session",
+            json!({ "task_id": task_id, "without_git": true }),
+        )
+        .await;
+    assert!(
+        result["session_id"].as_str().is_some(),
+        "a session is created without git"
+    );
+
+    // The task carries a session but no worktree or branch.
+    let task = server.task(&task_id).await;
+    assert!(
+        task["session_id"].as_str().is_some(),
+        "the task has a session"
+    );
+    assert!(
+        task["worktree_path"].is_null(),
+        "no worktree is created in no-git mode"
+    );
+    assert!(
+        task["branch"].is_null(),
+        "no branch is created in no-git mode"
+    );
+
+    // The project folder is left untouched — still not a git repository.
+    let inside_work_tree = std::process::Command::new("git")
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .current_dir(server.workspace())
+        .output()
+        .expect("git rev-parse");
+    assert!(
+        !inside_work_tree.status.success(),
+        "the folder is not turned into a git repo"
+    );
+}
+
+#[tokio::test]
 async fn git_merge_merges_the_branch_and_finishes_the_task() {
     let mut server = TestServer::start().await;
     let task_id = task_with_worktree(&mut server).await;

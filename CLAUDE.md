@@ -337,7 +337,8 @@ Do these in order. Do not jump ahead. Each phase ends in a working, committable 
 - [ ] On "start session" for a task:
   - if the project folder is not yet a git repo with a commit, ask the user to
     confirm initializing it
-  - run `git worktree add .viban/worktrees/<task-id> -b viban/<task-slug>`
+  - run `git worktree add <worktree> -b viban/<task-slug>`, where `<worktree>`
+    is in viban's data directory, **not** the project folder (see ADR-0003)
   - spawn `claude` with `current_dir` = worktree path
 - [ ] On task moved to Done: optional "merge & cleanup" — merge branch into base, then `git worktree remove`
 - [ ] On task cancelled / deleted: `git worktree remove --force` + delete branch
@@ -408,6 +409,16 @@ the worktree's diff by a one-shot `claude -p` call rather than always being
 the task title. The task title is the fallback when the CLI is unavailable or
 there are no changes, so commits always succeed offline.
 
+### Data outside the project folder
+
+viban stores **nothing** inside the user's project folder. The SQLite
+database and the git worktrees live in the OS local data directory
+(`%LOCALAPPDATA%\viban` / `~/.local/share/viban`), under `projects/<key>/`
+keyed per project. `viban-server` resolves this itself and accepts a
+`--data-dir` override. This keeps a cloud-synced project (OneDrive, Dropbox)
+from locking the database, and keeps agent worktrees off the sync. Design:
+`docs/decisions/0003-data-outside-the-project-folder.md`.
+
 ### Multiple attempts per task
 
 A task can be run by the agent more than once. Each run is an **attempt** with
@@ -419,6 +430,24 @@ another (a card with a session shows a **New attempt** button);
 `attempts.activate` switches the active attempt (the **DiffView** shows a
 selector when a task has more than one). Worktrees are keyed by attempt id.
 Design and rationale: `docs/decisions/0002-multiple-attempts-per-task.md`.
+
+### Work without Git
+
+A worktree needs the project folder to be **its own** git repository — being
+merely a subdirectory of an outer repo does not count, since a worktree would
+then branch off that outer repo. `git.is_repo_root` (compare `git rev-parse
+--show-toplevel` against the folder) makes this distinction; `prepare_repo`
+initializes a *dedicated* repo when the folder only sits inside an ancestor
+one.
+
+When the folder is not its own repository, `tasks.start_session` returns
+`needs_git_init` and the UI shows a dialog with three choices: **Initialize
+git** (`init_git: true` — make a repo, then use worktrees as usual), **Work
+without Git** (`without_git: true`), or cancel. In no-git mode the agent runs
+directly in the project folder: the attempt carries no `worktree_path` or
+`branch`, and diff review / merge — which need a worktree — do not apply.
+`attempts.create` follows the task's mode automatically (worktree when the
+project is a ready repository, otherwise a plain in-folder session).
 
 ## Coding conventions
 

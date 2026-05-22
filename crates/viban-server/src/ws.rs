@@ -18,8 +18,18 @@ use crate::auth;
 use crate::rpc::{self, SessionRegistry};
 
 /// Accept loop. Each connection is handled on its own task.
-pub async fn serve(listener: TcpListener, token: String, workspace: PathBuf, db: Db) -> Result<()> {
-    let ctx = Arc::new(rpc::Context { workspace, db });
+pub async fn serve(
+    listener: TcpListener,
+    token: String,
+    workspace: PathBuf,
+    data_dir: PathBuf,
+    db: Db,
+) -> Result<()> {
+    let ctx = Arc::new(rpc::Context {
+        workspace,
+        data_dir,
+        db,
+    });
     let token = Arc::new(token);
 
     loop {

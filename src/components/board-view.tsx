@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { X } from "lucide-react";
 import {
   closestCorners,
   DndContext,
@@ -64,6 +65,9 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
   // The task awaiting merge confirmation, and whether the merge is running.
   const [mergeTask, setMergeTask] = useState<Task | null>(null);
   const [mergeBusy, setMergeBusy] = useState(false);
+  // The last action error, shown as a dismissible banner. Without this a
+  // failed start_session / merge fails silently — the dialog just vanishes.
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -138,13 +142,19 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
     }
   }
 
-  async function handleStartSession(task: Task, initGit = false) {
+  async function handleStartSession(
+    task: Task,
+    options: { initGit?: boolean; withoutGit?: boolean } = {},
+  ) {
+    setActionError(null);
     try {
-      // The server creates the worktree + branch and links a session. If the
-      // project folder is not a git repo yet, it asks for confirmation first.
+      // The server links a session to the task. By default that means an
+      // isolated git worktree; if the project folder is not a git repo it
+      // asks how to proceed first (init git, or work without git).
       const result = await invoke<StartSessionResult>("start_session", {
         taskId: task.id,
-        initGit,
+        initGit: options.initGit ?? false,
+        withoutGit: options.withoutGit ?? false,
       });
       if (result.needs_git_init) {
         setGitInitTask(task);
@@ -158,6 +168,7 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
     } catch (err) {
       console.error(err);
       setGitInitTask(null);
+      setActionError(`Could not start the session: ${String(err)}`);
     }
   }
 
@@ -165,11 +176,20 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
     const task = gitInitTask;
     if (!task) return;
     setGitInitBusy(true);
-    await handleStartSession(task, true);
+    await handleStartSession(task, { initGit: true });
+    setGitInitBusy(false);
+  }
+
+  async function confirmWorkWithoutGit() {
+    const task = gitInitTask;
+    if (!task) return;
+    setGitInitBusy(true);
+    await handleStartSession(task, { withoutGit: true });
     setGitInitBusy(false);
   }
 
   async function handleNewAttempt(task: Task) {
+    setActionError(null);
     try {
       const result = await invoke<StartSessionResult>("create_attempt", {
         taskId: task.id,
@@ -180,18 +200,21 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
       }
     } catch (err) {
       console.error(err);
+      setActionError(`Could not start a new attempt: ${String(err)}`);
     }
   }
 
   async function confirmMerge() {
     const task = mergeTask;
     if (!task) return;
+    setActionError(null);
     setMergeBusy(true);
     try {
       await invoke("git_merge", { taskId: task.id });
       await loadBoard();
     } catch (err) {
       console.error(err);
+      setActionError(`Could not merge the task: ${String(err)}`);
     }
     setMergeBusy(false);
     setMergeTask(null);
@@ -212,44 +235,62 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
   const activeTask = activeId ? tasks[activeId] : null;
 
   return (
-    <div className="h-full overflow-x-auto p-4">
-      <DndContext
-        sensors={sensors}
-        collisionDetection={boardCollision}
-        onDragStart={onDragStart}
-        onDragOver={onDragOver}
-        onDragEnd={onDragEnd}
-        onDragCancel={() => {
-          setActiveId(null);
-          setHoverColumn(null);
-        }}
-      >
-        <div className="flex h-full gap-3">
-          {columns.map((column) => (
-            <BoardColumn
-              key={column.id}
-              column={column}
-              taskIds={columnTasks[column.id] ?? []}
-              tasks={tasks}
-              isTarget={column.id === hoverColumn}
-              onOpenSession={onOpenSession}
-              onStartSession={handleStartSession}
-              onReview={onReview}
-              onMerge={(task) => setMergeTask(task)}
-              onNewAttempt={handleNewAttempt}
-              onEdit={openEdit}
-              onAddTask={openCreate}
-            />
-          ))}
+    <div className="flex h-full flex-col">
+      {actionError && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive"
+        >
+          <span className="flex-1 break-words">{actionError}</span>
+          <button
+            type="button"
+            aria-label="Dismiss error"
+            className="shrink-0 rounded p-0.5 hover:bg-destructive/20"
+            onClick={() => setActionError(null)}
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
-        <DragOverlay>
-          {activeTask ? (
-            <div className="rounded-md border bg-card p-2 text-sm shadow-md">
-              <p className="font-medium">{activeTask.title}</p>
-            </div>
-          ) : null}
-        </DragOverlay>
-      </DndContext>
+      )}
+      <div className="flex-1 overflow-x-auto p-4">
+        <DndContext
+          sensors={sensors}
+          collisionDetection={boardCollision}
+          onDragStart={onDragStart}
+          onDragOver={onDragOver}
+          onDragEnd={onDragEnd}
+          onDragCancel={() => {
+            setActiveId(null);
+            setHoverColumn(null);
+          }}
+        >
+          <div className="flex h-full gap-3">
+            {columns.map((column) => (
+              <BoardColumn
+                key={column.id}
+                column={column}
+                taskIds={columnTasks[column.id] ?? []}
+                tasks={tasks}
+                isTarget={column.id === hoverColumn}
+                onOpenSession={onOpenSession}
+                onStartSession={handleStartSession}
+                onReview={onReview}
+                onMerge={(task) => setMergeTask(task)}
+                onNewAttempt={handleNewAttempt}
+                onEdit={openEdit}
+                onAddTask={openCreate}
+              />
+            ))}
+          </div>
+          <DragOverlay>
+            {activeTask ? (
+              <div className="rounded-md border bg-card p-2 text-sm shadow-md">
+                <p className="font-medium">{activeTask.title}</p>
+              </div>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
+      </div>
 
       <TaskDialog
         open={dialogOpen}
@@ -263,6 +304,7 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
         open={gitInitTask !== null}
         busy={gitInitBusy}
         onConfirm={() => void confirmGitInit()}
+        onWorkWithoutGit={() => void confirmWorkWithoutGit()}
         onOpenChange={(open) => {
           if (!open && !gitInitBusy) setGitInitTask(null);
         }}

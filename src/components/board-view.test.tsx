@@ -106,6 +106,7 @@ describe("BoardView", () => {
     expect(invokeMock).toHaveBeenCalledWith("start_session", {
       taskId: "t1",
       initGit: false,
+      withoutGit: false,
     });
   });
 
@@ -194,7 +195,7 @@ describe("BoardView", () => {
 
     // The confirmation dialog appears instead of starting immediately.
     expect(
-      await screen.findByText("Initialize a git repository?"),
+      await screen.findByText("Set up git for this project?"),
     ).toBeInTheDocument();
     expect(onOpenSession).not.toHaveBeenCalled();
 
@@ -204,5 +205,60 @@ describe("BoardView", () => {
       expect(onOpenSession).toHaveBeenCalledWith("session-after-init"),
     );
     expect(confirmedWithInit).toBe(true);
+  });
+
+  it("can start a session without git from the dialog", async () => {
+    const user = userEvent.setup();
+    const onOpenSession = vi.fn();
+    let startedWithoutGit = false;
+    boardWith([makeTask()], (command, args) => {
+      if (command === "start_session") {
+        if (args?.withoutGit === true) {
+          startedWithoutGit = true;
+          return Promise.resolve({ session_id: "session-no-git" });
+        }
+        return Promise.resolve({ needs_git_init: true });
+      }
+      return Promise.resolve();
+    });
+    render(<BoardView onOpenSession={onOpenSession} onReview={vi.fn()} />);
+
+    await screen.findByText("Write tests");
+    await user.click(screen.getByRole("button", { name: "Start session" }));
+
+    await screen.findByText("Set up git for this project?");
+    await user.click(
+      screen.getByRole("button", { name: "Work without Git" }),
+    );
+
+    await waitFor(() =>
+      expect(onOpenSession).toHaveBeenCalledWith("session-no-git"),
+    );
+    expect(startedWithoutGit).toBe(true);
+  });
+
+  it("surfaces a dismissible banner when starting a session fails", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    boardWith([makeTask()], (command) => {
+      if (command === "start_session") {
+        return Promise.reject("worktree creation blew up");
+      }
+      return Promise.resolve();
+    });
+    render(<BoardView onOpenSession={vi.fn()} onReview={vi.fn()} />);
+
+    await screen.findByText("Write tests");
+    await user.click(screen.getByRole("button", { name: "Start session" }));
+
+    // The failure is shown instead of being swallowed.
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("worktree creation blew up");
+
+    // And the banner can be dismissed.
+    await user.click(screen.getByRole("button", { name: "Dismiss error" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+    );
   });
 });
