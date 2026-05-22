@@ -25,6 +25,7 @@ export default function App() {
   const [status, setStatus] = useState<Status>("connecting");
   const [activeSession, setActiveSession] = useState<string | null>(null);
   const [reviewTask, setReviewTask] = useState<Task | null>(null);
+  const [projectError, setProjectError] = useState<string | null>(null);
 
   useEffect(() => {
     void invoke<string | null>("current_project")
@@ -65,6 +66,7 @@ export default function App() {
   }, [project]);
 
   const handleOpenProject = useCallback(async () => {
+    setProjectError(null);
     try {
       const path = await invoke<string | null>("open_project");
       if (path) {
@@ -74,7 +76,9 @@ export default function App() {
         setProject(path);
       }
     } catch (err) {
-      console.error(err);
+      // Surface the reason (e.g. "not a git repository") instead of
+      // failing silently.
+      setProjectError(String(err));
     }
   }, []);
 
@@ -96,6 +100,11 @@ export default function App() {
           </p>
         </div>
         <Button onClick={() => void handleOpenProject()}>Open project…</Button>
+        {projectError && (
+          <p className="max-w-sm text-center text-sm text-destructive">
+            {projectError}
+          </p>
+        )}
       </main>
     );
   }
@@ -161,6 +170,11 @@ export default function App() {
           Switch project
         </Button>
       </header>
+      {projectError && (
+        <p className="border-b bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
+          {projectError}
+        </p>
+      )}
       <div className="flex-1 overflow-hidden">
         <BoardView
           key={project}
