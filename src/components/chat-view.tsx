@@ -7,7 +7,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { rpc } from "@/lib/rpc";
 import { cn } from "@/lib/utils";
 import type { AgentEvent } from "@/types/agent";
-import type { TokenUsage } from "@/types/session";
 
 type Role = "user" | "assistant" | "tool" | "error";
 
@@ -30,31 +29,6 @@ function roleOf(raw: string): Role {
     : "assistant";
 }
 
-/** Formats an integer with comma thousands separators — locale-independent,
- *  so it renders the same everywhere (and in tests). */
-function grouped(value: number): string {
-  return value.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-}
-
-/** Claude Code's file-editing tools and the input key carrying the path. */
-const EDIT_TOOLS: Record<string, "file_path" | "notebook_path"> = {
-  Edit: "file_path",
-  Write: "file_path",
-  MultiEdit: "file_path",
-  NotebookEdit: "notebook_path",
-};
-
-/** The path a `tool_use` event edited, for file-modifying tools only. */
-function editedPath(event: AgentEvent): string | null {
-  if (event.type !== "tool_use") return null;
-  const key = EDIT_TOOLS[event.name];
-  if (!key) return null;
-  const input = event.input;
-  if (typeof input !== "object" || input === null) return null;
-  const value = (input as Record<string, unknown>)[key];
-  return typeof value === "string" ? value : null;
-}
-
 interface ChatViewProps {
   /** The viban session id this view is bound to. */
   sessionId: string;
@@ -67,13 +41,6 @@ export function ChatView({ sessionId, onSpawned }: ChatViewProps) {
   const [bubbles, setBubbles] = useState<Bubble[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  // Files the agent has edited this session — its footprint.
-  const [files, setFiles] = useState<string[]>([]);
-  // Accumulated token usage for the session.
-  const [usage, setUsage] = useState<TokenUsage>({
-    input_tokens: 0,
-    output_tokens: 0,
-  });
   // Whether the session already exists server-side (vs. a fresh, unspawned one).
   const startedRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -92,40 +59,25 @@ export function ChatView({ sessionId, onSpawned }: ChatViewProps) {
         case "assistant_text":
           setBubbles((prev) => [...prev, makeBubble("assistant", event.text)]);
           break;
-        case "tool_use": {
+        case "tool_use":
           setBubbles((prev) => [
             ...prev,
             makeBubble("tool", `using ${event.name}`),
           ]);
-          const path = editedPath(event);
-          if (path) {
-            setFiles((prev) =>
-              prev.includes(path) ? prev : [...prev, path],
-            );
-          }
           break;
-        }
         case "error":
           setBubbles((prev) => [...prev, makeBubble("error", event.message)]);
           setBusy(false);
           break;
-        case "result": {
+        case "result":
           if (event.is_error) {
             setBubbles((prev) => [
               ...prev,
               makeBubble("error", "the agent reported an error"),
             ]);
           }
-          const turn = event.usage;
-          if (turn) {
-            setUsage((prev) => ({
-              input_tokens: prev.input_tokens + turn.input_tokens,
-              output_tokens: prev.output_tokens + turn.output_tokens,
-            }));
-          }
           setBusy(false);
           break;
-        }
         default:
           break;
       }
@@ -144,8 +96,6 @@ export function ChatView({ sessionId, onSpawned }: ChatViewProps) {
             text: message.content,
           })),
         );
-        setFiles(history.files);
-        setUsage(history.usage);
       })
       .catch(() => {
         // No row for this id yet — it is a brand-new session.
@@ -187,23 +137,6 @@ export function ChatView({ sessionId, onSpawned }: ChatViewProps) {
 
   return (
     <div className="flex h-full flex-col">
-      {files.length > 0 && (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b px-4 py-1.5 text-xs text-muted-foreground">
-          <span className="font-medium">
-            Files touched ({files.length}):
-          </span>
-          {files.map((file) => (
-            <span key={file} className="font-mono">
-              {file}
-            </span>
-          ))}
-        </div>
-      )}
-      {(usage.input_tokens > 0 || usage.output_tokens > 0) && (
-        <div className="border-b px-4 py-1.5 text-xs text-muted-foreground">
-          {`Tokens: ${grouped(usage.input_tokens)} in · ${grouped(usage.output_tokens)} out`}
-        </div>
-      )}
       <ScrollArea className="flex-1">
         <div className="mx-auto flex max-w-2xl flex-col gap-3 p-4">
           {bubbles.length === 0 && (
