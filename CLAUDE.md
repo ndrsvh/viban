@@ -337,7 +337,8 @@ Do these in order. Do not jump ahead. Each phase ends in a working, committable 
 - [ ] On "start session" for a task:
   - if the project folder is not yet a git repo with a commit, ask the user to
     confirm initializing it
-  - run `git worktree add .viban/worktrees/<task-id> -b viban/<task-slug>`
+  - run `git worktree add <worktree> -b viban/<task-slug>`, where `<worktree>`
+    is in viban's data directory, **not** the project folder (see ADR-0003)
   - spawn `claude` with `current_dir` = worktree path
 - [ ] On task moved to Done: optional "merge & cleanup" — merge branch into base, then `git worktree remove`
 - [ ] On task cancelled / deleted: `git worktree remove --force` + delete branch
@@ -407,6 +408,16 @@ When a review is accepted (`git.commit`), the commit message is generated from
 the worktree's diff by a one-shot `claude -p` call rather than always being
 the task title. The task title is the fallback when the CLI is unavailable or
 there are no changes, so commits always succeed offline.
+
+### Data outside the project folder
+
+viban stores **nothing** inside the user's project folder. The SQLite
+database and the git worktrees live in the OS local data directory
+(`%LOCALAPPDATA%\viban` / `~/.local/share/viban`), under `projects/<key>/`
+keyed per project. `viban-server` resolves this itself and accepts a
+`--data-dir` override. This keeps a cloud-synced project (OneDrive, Dropbox)
+from locking the database, and keeps agent worktrees off the sync. Design:
+`docs/decisions/0003-data-outside-the-project-folder.md`.
 
 ### Multiple attempts per task
 
