@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, Mutex};
 
-use viban_core::agents::{spawn_claude, ClaudeSession};
+use viban_core::agents::{generate_commit_message, spawn_claude, ClaudeSession};
 use viban_core::db::Db;
 use viban_core::types::{Attempt, Message, Session, Task};
 use viban_core::{git, new_id, AgentEvent};
@@ -580,10 +580,14 @@ async fn git_diff(params: Value, ctx: &Context) -> Result<Value, RpcError> {
 }
 
 /// Commits a task's worktree changes and moves the task to the Review column.
+/// The commit message is generated from the diff by the agent, falling back to
+/// the task title.
 async fn git_commit(params: Value, ctx: &Context) -> Result<Value, RpcError> {
     let task_id = str_param(&params, "task_id")?;
     let (mut task, worktree) = task_worktree(ctx, task_id).await?;
-    git::commit_all(&worktree, &task.title)
+    let files = git::worktree_diff(&worktree).await.unwrap_or_default();
+    let message = generate_commit_message(&worktree, &files, &task.title).await;
+    git::commit_all(&worktree, &message)
         .await
         .map_err(|err| RpcError::internal(format!("failed to commit worktree: {err}")))?;
     move_task_to_column(ctx, &mut task, "Review").await?;
