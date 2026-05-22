@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   closestCorners,
@@ -6,15 +6,16 @@ import {
   DragOverlay,
   KeyboardSensor,
   PointerSensor,
+  pointerWithin,
   useDroppable,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
   type DragOverEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
 import {
-  arrayMove,
   SortableContext,
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
@@ -23,11 +24,20 @@ import {
 import { TaskCard } from "@/components/task-card";
 import { TaskDialog } from "@/components/task-dialog";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import type { Column, Task } from "@/types/board";
 
 interface BoardViewProps {
   onOpenSession: (sessionId: string) => void;
 }
+
+// Cards are as wide as a column, so closest-corners is ambiguous between
+// adjacent columns. Resolve the drop by the pointer's position instead,
+// falling back to closest-corners when the pointer is in a gap.
+const boardCollision: CollisionDetection = (args) => {
+  const byPointer = pointerWithin(args);
+  return byPointer.length > 0 ? byPointer : closestCorners(args);
+};
 
 /** The Kanban board: columns of draggable task cards. */
 export function BoardView({ onOpenSession }: BoardViewProps) {
@@ -35,10 +45,10 @@ export function BoardView({ onOpenSession }: BoardViewProps) {
   const [columnTasks, setColumnTasks] = useState<Record<string, string[]>>({});
   const [tasks, setTasks] = useState<Record<string, Task>>({});
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [hoverColumn, setHoverColumn] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogTask, setDialogTask] = useState<Task | null>(null);
   const [dialogColumn, setDialogColumn] = useState<string | null>(null);
-  const draggedFrom = useRef<string | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -77,56 +87,39 @@ export function BoardView({ onOpenSession }: BoardViewProps) {
   }
 
   function onDragStart(event: DragStartEvent) {
-    const id = String(event.active.id);
-    setActiveId(id);
-    draggedFrom.current = columnOf(id) ?? null;
+    setActiveId(String(event.active.id));
   }
 
-  // Live cross-column move so the card visually relocates mid-drag.
+  // Only tracks the hovered column for the drop-target highlight. The actual
+  // move happens on drop — moving mid-drag oscillates between adjacent columns.
   function onDragOver(event: DragOverEvent) {
-    const { active, over } = event;
-    if (!over) return;
-    const activeId = String(active.id);
-    const overId = String(over.id);
-    const from = columnOf(activeId);
-    const to = columnOf(overId);
-    if (!from || !to || from === to) return;
-    setColumnTasks((prev) => {
-      const fromIds = prev[from].filter((id) => id !== activeId);
-      const toIds = prev[to].filter((id) => id !== activeId);
-      const overIndex = toIds.indexOf(overId);
-      toIds.splice(overIndex === -1 ? toIds.length : overIndex, 0, activeId);
-      return { ...prev, [from]: fromIds, [to]: toIds };
-    });
+    const overId = event.over ? String(event.over.id) : null;
+    setHoverColumn(overId ? (columnOf(overId) ?? null) : null);
   }
 
   function onDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     setActiveId(null);
-    const from = draggedFrom.current;
-    draggedFrom.current = null;
+    setHoverColumn(null);
     if (!over) return;
 
     const activeId = String(active.id);
     const overId = String(over.id);
-    const column = columnOf(activeId);
-    if (!column) return;
+    const from = columnOf(activeId);
+    const to = columnOf(overId);
+    if (!from || !to) return;
+    if (from === to && activeId === overId) return;
 
-    let next = columnTasks;
-    if (activeId !== overId && columnOf(overId) === column) {
-      const ids = columnTasks[column];
-      const oldIndex = ids.indexOf(activeId);
-      const newIndex = ids.indexOf(overId);
-      if (oldIndex !== -1 && newIndex !== -1) {
-        next = { ...columnTasks, [column]: arrayMove(ids, oldIndex, newIndex) };
-        setColumnTasks(next);
-      }
-    }
+    const next = { ...columnTasks };
+    next[from] = next[from].filter((id) => id !== activeId);
+    const toIds = next[to].filter((id) => id !== activeId);
+    const overIndex = overId === to ? -1 : toIds.indexOf(overId);
+    toIds.splice(overIndex === -1 ? toIds.length : overIndex, 0, activeId);
+    next[to] = toIds;
+    setColumnTasks(next);
 
-    const affected = new Set<string>([column]);
-    if (from && from !== column) affected.add(from);
-    for (const columnId of affected) {
-      void invoke("reorder_tasks", { columnId, taskIds: next[columnId] ?? [] });
+    for (const columnId of new Set([from, to])) {
+      void invoke("reorder_tasks", { columnId, taskIds: next[columnId] });
     }
   }
 
@@ -158,11 +151,14 @@ export function BoardView({ onOpenSession }: BoardViewProps) {
     <div className="h-full overflow-x-auto p-4">
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCorners}
+        collisionDetection={boardCollision}
         onDragStart={onDragStart}
         onDragOver={onDragOver}
         onDragEnd={onDragEnd}
-        onDragCancel={() => setActiveId(null)}
+        onDragCancel={() => {
+          setActiveId(null);
+          setHoverColumn(null);
+        }}
       >
         <div className="flex h-full gap-3">
           {columns.map((column) => (
@@ -171,6 +167,7 @@ export function BoardView({ onOpenSession }: BoardViewProps) {
               column={column}
               taskIds={columnTasks[column.id] ?? []}
               tasks={tasks}
+              isTarget={column.id === hoverColumn}
               onOpenSession={onOpenSession}
               onStartSession={handleStartSession}
               onEdit={openEdit}
@@ -202,6 +199,8 @@ interface BoardColumnProps {
   column: Column;
   taskIds: string[];
   tasks: Record<string, Task>;
+  /** True while a dragged card's drop target is this column. */
+  isTarget: boolean;
   onOpenSession: (sessionId: string) => void;
   onStartSession: (task: Task) => void;
   onEdit: (task: Task) => void;
@@ -212,6 +211,7 @@ function BoardColumn({
   column,
   taskIds,
   tasks,
+  isTarget,
   onOpenSession,
   onStartSession,
   onEdit,
@@ -219,7 +219,12 @@ function BoardColumn({
 }: BoardColumnProps) {
   const { setNodeRef } = useDroppable({ id: column.id });
   return (
-    <div className="flex w-72 shrink-0 flex-col rounded-md bg-muted/40">
+    <div
+      className={cn(
+        "flex w-72 shrink-0 flex-col rounded-md bg-muted/40 ring-2 transition-colors",
+        isTarget ? "ring-primary" : "ring-transparent",
+      )}
+    >
       <div className="flex items-center justify-between px-3 py-2">
         <h2 className="text-sm font-medium">{column.name}</h2>
         <span className="text-xs text-muted-foreground">{taskIds.length}</span>
@@ -242,6 +247,11 @@ function BoardColumn({
             ) : null;
           })}
         </SortableContext>
+        {taskIds.length === 0 && (
+          <div className="rounded-md border border-dashed py-6 text-center text-xs text-muted-foreground">
+            Drop tasks here
+          </div>
+        )}
         <Button
           variant="ghost"
           size="sm"
