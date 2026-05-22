@@ -14,6 +14,7 @@ import type {
   TaskStatusUpdate,
 } from "@/types/board";
 import type { FileDiff } from "@/types/diff";
+import type { CommandOutput } from "@/types/exec";
 import type { ServerHealth } from "@/types/server";
 import type { Message, Session } from "@/types/session";
 
@@ -87,6 +88,13 @@ export const rpc = {
     invoke<{ attempts: Attempt[] }>("list_attempts", { taskId }),
   activateAttempt: (attemptId: string) =>
     invoke<null>("activate_attempt", { attemptId }),
+
+  // -- command runs ---------------------------------------------------------
+  runCommand: (taskId: string, command: string) =>
+    invoke<null>("run_command", { taskId, command }),
+  watchRun: (taskId: string, onEvent: Channel<CommandOutput>) =>
+    invoke<null>("watch_run", { taskId, onEvent }),
+  unwatchRun: (taskId: string) => invoke<null>("unwatch_run", { taskId }),
 
   // -- git review -----------------------------------------------------------
   gitDiff: (taskId: string) =>

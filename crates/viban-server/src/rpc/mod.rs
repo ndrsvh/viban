@@ -154,6 +154,7 @@ async fn dispatch(method: &str, params: Value, ctx: &Context) -> Result<Value, R
         "tasks.update" => tasks::update(params, ctx).await,
         "tasks.delete" => tasks::delete(params, ctx).await,
         "tasks.reorder" => tasks::reorder(params, ctx).await,
+        "tasks.run_command" => tasks::run_command(params, ctx).await,
         "tasks.start_session" => attempts::start_session(params, ctx).await,
         "attempts.create" => attempts::create(params, ctx).await,
         "attempts.list" => attempts::list(params, ctx).await,

@@ -1,11 +1,11 @@
 //! `boards.get` and the `tasks.*` CRUD methods.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
 use viban_core::types::Task;
-use viban_core::{git, new_id};
+use viban_core::{exec, git, new_id};
 
 use super::{now_millis, str_param, Context, RpcError};
 
@@ -132,6 +132,33 @@ pub(super) async fn reorder(params: Value, ctx: &Context) -> Result<Value, RpcEr
     Ok(json!({ "ok": true }))
 }
 
+/// Runs a shell command in a task's worktree (or the project folder for a
+/// no-git task), streaming its output on the `run:<task_id>` topic. Returns
+/// immediately — a long command never blocks the JSON-RPC loop.
+pub(super) async fn run_command(params: Value, ctx: &Context) -> Result<Value, RpcError> {
+    let task_id = str_param(&params, "task_id")?.to_string();
+    let command = str_param(&params, "command")?.to_string();
+    let task = ctx
+        .db
+        .get_task(task_id.clone())
+        .await?
+        .ok_or_else(|| RpcError::invalid_params(format!("unknown task: {task_id}")))?;
+    let workdir = task
+        .worktree_path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| ctx.workspace.clone());
+
+    let mut output = exec::run_command(&workdir, &command)?;
+    let events = ctx.events.clone();
+    let topic = format!("run:{task_id}");
+    tokio::spawn(async move {
+        while let Some(event) = output.recv().await {
+            events.emit(&topic, &event);
+        }
+    });
+    Ok(json!({ "ok": true }))
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -147,6 +174,15 @@ mod tests {
             !board["columns"].as_array().expect("columns").is_empty(),
             "the default board has columns"
         );
+    }
+
+    #[tokio::test]
+    async fn run_command_rejects_an_unknown_task() {
+        let (ctx, _ws, _data) = context().await;
+        let err = super::run_command(json!({ "task_id": "ghost", "command": "echo hi" }), &ctx)
+            .await
+            .expect_err("an unknown task errors");
+        assert_eq!(err.code, -32602);
     }
 
     #[tokio::test]
