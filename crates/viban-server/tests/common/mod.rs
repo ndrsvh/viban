@@ -32,8 +32,19 @@ pub struct TestServer {
 impl TestServer {
     /// Spawns the server against a fresh temp git repo and authenticates.
     pub async fn start() -> Self {
+        Self::start_inner(true).await
+    }
+
+    /// Spawns the server against a plain (non-git) temp folder.
+    pub async fn start_without_git() -> Self {
+        Self::start_inner(false).await
+    }
+
+    async fn start_inner(with_git: bool) -> Self {
         let root = tempfile::tempdir().expect("create temp dir");
-        init_git_repo(root.path());
+        if with_git {
+            init_git_repo(root.path());
+        }
 
         let token = "integration-test-token";
         let mut server = Command::new(env!("CARGO_BIN_EXE_viban-server"))
