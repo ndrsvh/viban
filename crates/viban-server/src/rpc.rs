@@ -579,3 +579,38 @@ fn serialize(response: Response) -> String {
             .to_string()
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::make_title;
+
+    #[test]
+    fn make_title_keeps_a_short_prompt_verbatim() {
+        assert_eq!(make_title("Fix the login bug"), "Fix the login bug");
+    }
+
+    #[test]
+    fn make_title_uses_only_the_first_line() {
+        assert_eq!(make_title("First line\nsecond line\nthird"), "First line");
+    }
+
+    #[test]
+    fn make_title_truncates_and_ellipsizes_long_prompts() {
+        let long = "a".repeat(80);
+        let title = make_title(&long);
+        assert!(title.ends_with('…'), "long titles end with an ellipsis");
+        assert_eq!(title.chars().count(), 51, "50 characters plus the ellipsis");
+    }
+
+    #[test]
+    fn make_title_does_not_truncate_at_exactly_fifty_characters() {
+        let exact = "a".repeat(50);
+        assert_eq!(make_title(&exact), exact);
+    }
+
+    #[test]
+    fn make_title_falls_back_for_blank_input() {
+        assert_eq!(make_title(""), "Untitled session");
+        assert_eq!(make_title("   \n  "), "Untitled session");
+    }
+}
