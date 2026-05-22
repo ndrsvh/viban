@@ -144,6 +144,12 @@ async fn supervise_sidecar(app: AppHandle) {
                     }
                 }
 
+                // The exit handler pulses `project_changed` too; when the app
+                // is shutting down, stop quietly instead of reporting a
+                // restart that will never happen.
+                if state.shutting_down.load(Ordering::Relaxed) {
+                    return;
+                }
                 if switched {
                     tracing::info!("project changed; restarting viban-server");
                     continue;
