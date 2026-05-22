@@ -30,6 +30,10 @@ jobs:
         run: npm run lint
       - name: Frontend tests
         run: npm run test
+      - name: Generated TS bindings are current
+        run: |
+          cargo test -p viban-core
+          git diff --exit-code -- src/types/generated
 
   build:
     name: Build (${{ matrix.os }})

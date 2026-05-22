@@ -474,7 +474,7 @@ project is a ready repository, otherwise a plain in-folder session).
 ### TypeScript
 
 - `strict: true`. No `any` — use `unknown` and narrow.
-- DTOs in `src/types/` mirror Rust structs. Keep them in sync manually for MVP. Migrate to `specta` for codegen post-MVP.
+- DTOs in `src/types/` are generated from the Rust structs in `viban-core` by `ts-rs` — `cargo test` writes `src/types/generated/`, and the hand-written `src/types/*.ts` files re-export those mirrors. CI fails if the committed output is stale. To add a shared type, derive `TS` on the Rust struct (with `#[ts(export, export_to = "../../../src/types/generated/")]`) — never hand-write the TypeScript mirror.
 - Functional components only. No classes.
 - Side effects in hooks; shared state in Zustand stores.
 - Tailwind utilities only — no global custom CSS unless absolutely needed.

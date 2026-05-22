@@ -4,12 +4,14 @@ use std::path::Path;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use super::run_git;
 
 /// How a file changed relative to the worktree's HEAD.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../../src/types/generated/")]
 pub enum FileStatus {
     Added,
     Modified,
@@ -18,7 +20,8 @@ pub enum FileStatus {
 
 /// One changed file in a worktree, carrying both sides so a diff can be
 /// rendered without further git calls.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../src/types/generated/")]
 pub struct FileDiff {
     pub path: String,
     pub status: FileStatus,

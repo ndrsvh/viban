@@ -1,9 +1,14 @@
 //! Domain types shared across viban — persisted rows and wire payloads.
+//!
+//! Each type derives `ts_rs::TS`; `cargo test` regenerates the matching
+//! TypeScript in `src/types/generated/`, so the frontend types never drift.
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 /// A persisted Claude Code session.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../src/types/generated/")]
 pub struct Session {
     /// viban's own session id (the primary key and wire id).
     pub id: String,
@@ -13,13 +18,17 @@ pub struct Session {
     /// Display title — the first user prompt, truncated.
     pub title: String,
     /// Creation time, Unix epoch milliseconds.
+    // Over JSON-RPC this is a plain JSON number; ts-rs would otherwise emit
+    // `bigint`, which a JSON number is not at runtime.
+    #[ts(type = "number")]
     pub created_at: i64,
     /// Filesystem path of the workspace the session runs in.
     pub project_path: String,
 }
 
 /// One persisted message within a session.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../src/types/generated/")]
 pub struct Message {
     pub id: String,
     pub session_id: String,
@@ -28,36 +37,47 @@ pub struct Message {
     /// Human-readable text content.
     pub content: String,
     /// Creation time, Unix epoch milliseconds.
+    // Over JSON-RPC this is a plain JSON number; ts-rs would otherwise emit
+    // `bigint`, which a JSON number is not at runtime.
+    #[ts(type = "number")]
     pub created_at: i64,
     /// The raw agent event JSON, when the message came from one.
     pub raw_json: Option<String>,
 }
 
 /// A Kanban board — one per workspace in the current MVP.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../src/types/generated/")]
 pub struct Board {
     pub id: String,
     pub name: String,
     pub project_path: String,
+    // Over JSON-RPC this is a plain JSON number; ts-rs would otherwise emit
+    // `bigint`, which a JSON number is not at runtime.
+    #[ts(type = "number")]
     pub created_at: i64,
 }
 
 /// A column on a board, ordered by `position`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../src/types/generated/")]
 pub struct Column {
     pub id: String,
     pub board_id: String,
     pub name: String,
+    #[ts(type = "number")]
     pub position: i64,
 }
 
 /// A task card within a column, ordered by `position`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../src/types/generated/")]
 pub struct Task {
     pub id: String,
     pub column_id: String,
     pub title: String,
     pub description: String,
+    #[ts(type = "number")]
     pub position: i64,
     /// The viban session started from this task, if any.
     pub session_id: Option<String>,
@@ -65,19 +85,26 @@ pub struct Task {
     pub worktree_path: Option<String>,
     /// The git branch the task's worktree is on.
     pub branch: Option<String>,
+    // Over JSON-RPC this is a plain JSON number; ts-rs would otherwise emit
+    // `bigint`, which a JSON number is not at runtime.
+    #[ts(type = "number")]
     pub created_at: i64,
 }
 
 /// One agent run of a task, with its own session, worktree, and branch. A
 /// task may have several attempts; the task's own `session_id` /
 /// `worktree_path` / `branch` point at the currently active one.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../src/types/generated/")]
 pub struct Attempt {
     pub id: String,
     pub task_id: String,
     pub session_id: Option<String>,
     pub worktree_path: Option<String>,
     pub branch: Option<String>,
+    // Over JSON-RPC this is a plain JSON number; ts-rs would otherwise emit
+    // `bigint`, which a JSON number is not at runtime.
+    #[ts(type = "number")]
     pub created_at: i64,
 }
 
