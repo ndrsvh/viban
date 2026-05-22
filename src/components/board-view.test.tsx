@@ -205,4 +205,29 @@ describe("BoardView", () => {
     );
     expect(confirmedWithInit).toBe(true);
   });
+
+  it("surfaces a dismissible banner when starting a session fails", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    boardWith([makeTask()], (command) => {
+      if (command === "start_session") {
+        return Promise.reject("worktree creation blew up");
+      }
+      return Promise.resolve();
+    });
+    render(<BoardView onOpenSession={vi.fn()} onReview={vi.fn()} />);
+
+    await screen.findByText("Write tests");
+    await user.click(screen.getByRole("button", { name: "Start session" }));
+
+    // The failure is shown instead of being swallowed.
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("worktree creation blew up");
+
+    // And the banner can be dismissed.
+    await user.click(screen.getByRole("button", { name: "Dismiss error" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+    );
+  });
 });
