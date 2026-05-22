@@ -13,7 +13,7 @@ use tokio_rusqlite::rusqlite::{self, params, OptionalExtension};
 use tokio_rusqlite::Connection;
 
 use crate::now_millis;
-use crate::types::{Message, Session};
+use crate::types::{Message, Session, TokenUsage};
 
 /// The viban session/message store. Cheap to clone — the inner connection
 /// handle is shared, so background tasks can hold their own copy.
@@ -207,6 +207,54 @@ impl Db {
             .context("failed to list session files")?;
         Ok(files)
     }
+
+    /// Adds one turn's token counts to a session's running total.
+    pub async fn add_session_usage(
+        &self,
+        session_id: String,
+        input_tokens: i64,
+        output_tokens: i64,
+    ) -> Result<()> {
+        self.conn
+            .call(move |conn| -> rusqlite::Result<()> {
+                conn.execute(
+                    "INSERT INTO session_usage (session_id, input_tokens, output_tokens) \
+                     VALUES (?1, ?2, ?3) \
+                     ON CONFLICT(session_id) DO UPDATE SET \
+                       input_tokens = input_tokens + ?2, \
+                       output_tokens = output_tokens + ?3",
+                    params![session_id, input_tokens, output_tokens],
+                )?;
+                Ok(())
+            })
+            .await
+            .context("failed to record session usage")?;
+        Ok(())
+    }
+
+    /// A session's accumulated token usage — zero if it has reported none.
+    pub async fn get_session_usage(&self, session_id: String) -> Result<TokenUsage> {
+        let usage = self
+            .conn
+            .call(move |conn| -> rusqlite::Result<TokenUsage> {
+                conn.query_row(
+                    "SELECT input_tokens, output_tokens FROM session_usage \
+                     WHERE session_id = ?1",
+                    params![session_id],
+                    |row| {
+                        Ok(TokenUsage {
+                            input_tokens: row.get(0)?,
+                            output_tokens: row.get(1)?,
+                        })
+                    },
+                )
+                .optional()
+                .map(Option::unwrap_or_default)
+            })
+            .await
+            .context("failed to get session usage")?;
+        Ok(usage)
+    }
 }
 
 fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<Session> {
@@ -345,7 +393,33 @@ mod tests {
             })
             .await
             .expect("query migration versions");
-        assert_eq!(versions, vec![1, 2, 3, 4, 5], "all migrations are recorded");
+        assert_eq!(
+            versions,
+            vec![1, 2, 3, 4, 5, 6],
+            "all migrations are recorded"
+        );
+    }
+
+    #[tokio::test]
+    async fn session_usage_accumulates_across_turns() {
+        let db = Db::open_in_memory().await.expect("open");
+        db.create_session(session("s1")).await.expect("create");
+
+        // No usage yet — zero.
+        let zero = db.get_session_usage("s1".into()).await.expect("usage");
+        assert_eq!(zero.input_tokens, 0);
+        assert_eq!(zero.output_tokens, 0);
+
+        db.add_session_usage("s1".into(), 100, 40)
+            .await
+            .expect("turn 1");
+        db.add_session_usage("s1".into(), 250, 90)
+            .await
+            .expect("turn 2");
+
+        let total = db.get_session_usage("s1".into()).await.expect("usage");
+        assert_eq!(total.input_tokens, 350);
+        assert_eq!(total.output_tokens, 130);
     }
 
     #[tokio::test]

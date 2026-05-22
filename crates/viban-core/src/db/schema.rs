@@ -93,6 +93,16 @@ CREATE TABLE session_files (
 CREATE INDEX idx_session_files_session ON session_files (session_id, created_at);
 ";
 
+/// Migration 6 — session_usage: per-session token totals, accumulated from
+/// the `usage` reported on each agent `result` event.
+pub const MIGRATION_6: &str = "
+CREATE TABLE session_usage (
+    session_id    TEXT PRIMARY KEY REFERENCES sessions(id),
+    input_tokens  INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL
+);
+";
+
 /// Every migration, in application order. A migration's version is its
 /// 1-based index in this list.
 pub const MIGRATIONS: &[&str] = &[
@@ -101,4 +111,5 @@ pub const MIGRATIONS: &[&str] = &[
     MIGRATION_3,
     MIGRATION_4,
     MIGRATION_5,
+    MIGRATION_6,
 ];

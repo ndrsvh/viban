@@ -122,8 +122,14 @@ pub(super) async fn get(params: Value, ctx: &Context) -> Result<Value, RpcError>
         .await?
         .ok_or_else(|| RpcError::invalid_params(format!("unknown session: {session_id}")))?;
     let messages = ctx.db.get_messages(session_id.clone()).await?;
-    let files = ctx.db.list_session_files(session_id).await?;
-    Ok(json!({ "session": session, "messages": messages, "files": files }))
+    let files = ctx.db.list_session_files(session_id.clone()).await?;
+    let usage = ctx.db.get_session_usage(session_id).await?;
+    Ok(json!({
+        "session": session,
+        "messages": messages,
+        "files": files,
+        "usage": usage,
+    }))
 }
 
 /// Resolves the working directory for a session's agent: the worktree of the
@@ -171,8 +177,10 @@ fn edited_path(event: &AgentEvent) -> Option<String> {
 /// events leave the agent `Running`; only the turn's end moves it.
 fn status_for(event: &AgentEvent) -> Option<AgentStatus> {
     match event {
-        AgentEvent::Result { is_error: false } => Some(AgentStatus::Done),
-        AgentEvent::Result { is_error: true } => Some(AgentStatus::Failed),
+        AgentEvent::Result {
+            is_error: false, ..
+        } => Some(AgentStatus::Done),
+        AgentEvent::Result { is_error: true, .. } => Some(AgentStatus::Failed),
         AgentEvent::Error { .. } => Some(AgentStatus::Failed),
         _ => None,
     }
@@ -230,6 +238,19 @@ fn spawn_event_pump(
             if let Some(path) = edited_path(&event) {
                 if let Err(err) = db.record_session_file(session_id.clone(), path).await {
                     tracing::warn!(%err, "failed to record session file");
+                }
+            }
+
+            // Accumulate the turn's token usage.
+            if let AgentEvent::Result {
+                usage: Some(usage), ..
+            } = &event
+            {
+                if let Err(err) = db
+                    .add_session_usage(session_id.clone(), usage.input_tokens, usage.output_tokens)
+                    .await
+                {
+                    tracing::warn!(%err, "failed to record session usage");
                 }
             }
 
@@ -352,11 +373,17 @@ mod tests {
         use viban_core::types::AgentStatus;
         use viban_core::AgentEvent;
         assert_eq!(
-            super::status_for(&AgentEvent::Result { is_error: false }),
+            super::status_for(&AgentEvent::Result {
+                is_error: false,
+                usage: None,
+            }),
             Some(AgentStatus::Done),
         );
         assert_eq!(
-            super::status_for(&AgentEvent::Result { is_error: true }),
+            super::status_for(&AgentEvent::Result {
+                is_error: true,
+                usage: None,
+            }),
             Some(AgentStatus::Failed),
         );
         assert_eq!(

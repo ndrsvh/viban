@@ -114,6 +114,18 @@ pub struct TaskStatusUpdate {
     pub status: AgentStatus,
 }
 
+/// Token counts reported by Claude Code. Per turn on a `result` event;
+/// accumulated into a per-session total.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../src/types/generated/")]
+pub struct TokenUsage {
+    // JSON numbers over the wire — pin to `number`, not `bigint`.
+    #[ts(type = "number")]
+    pub input_tokens: i64,
+    #[ts(type = "number")]
+    pub output_tokens: i64,
+}
+
 /// One agent run of a task, with its own session, worktree, and branch. A
 /// task may have several attempts; the task's own `session_id` /
 /// `worktree_path` / `branch` point at the currently active one.

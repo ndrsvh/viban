@@ -514,6 +514,20 @@ forwards the stream on the **`run:<task_id>`** notification topic, so a long
 command never blocks the JSON-RPC loop. The DiffView subscribes to that topic
 while it is shown and renders the output.
 
+### Token usage
+
+Each agent turn ends with a `result` event whose `usage` object reports the
+turn's token counts. The stream parser captures `input_tokens` /
+`output_tokens` into `AgentEvent::Result`'s `usage` (best-effort — a missing
+or differently-shaped `usage` simply yields `None`).
+
+The agent event pump accumulates each turn's tokens into a `session_usage`
+table — a per-session running total. `sessions.get` returns the session's
+`usage`, and the chat view shows it (seeded from history, grown live from the
+`result` events it already receives). Cost is intentionally not tracked yet:
+it depends on per-model pricing and on whether `total_cost_usd` is per-turn
+or cumulative — token counts are unambiguous.
+
 ## Coding conventions
 
 ### Rust
