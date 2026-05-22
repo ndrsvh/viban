@@ -97,6 +97,11 @@ impl Client {
             .insert(subscription_id.to_string(), tx);
         rx
     }
+
+    /// Drops a subscription so its events are no longer routed anywhere.
+    pub async fn unsubscribe(&self, subscription_id: &str) {
+        self.subscriptions.lock().await.remove(subscription_id);
+    }
 }
 
 /// Reads the socket until it closes, routing each message to its waiting

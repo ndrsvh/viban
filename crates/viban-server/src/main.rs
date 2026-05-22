@@ -42,6 +42,12 @@ async fn main() -> Result<()> {
     let token = std::env::var("VIBAN_AUTH_TOKEN")
         .context("VIBAN_AUTH_TOKEN environment variable must be set")?;
 
+    let db_dir = args.workspace.join(".viban");
+    std::fs::create_dir_all(&db_dir).context("failed to create .viban directory")?;
+    let db = viban_core::db::Db::open(&db_dir.join("viban.db"))
+        .await
+        .context("failed to open the database")?;
+
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", args.port))
         .await
         .with_context(|| format!("failed to bind 127.0.0.1:{}", args.port))?;
@@ -60,5 +66,5 @@ async fn main() -> Result<()> {
 
     tracing::info!(port, workspace = %args.workspace.display(), "viban-server listening");
 
-    ws::serve(listener, token, args.workspace).await
+    ws::serve(listener, token, args.workspace, db).await
 }
