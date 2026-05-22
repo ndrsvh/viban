@@ -44,6 +44,51 @@ async fn is_git_repo_distinguishes_repos_from_plain_directories() {
 }
 
 #[tokio::test]
+async fn is_repo_root_distinguishes_a_root_from_a_nested_subfolder() {
+    let repo = tempfile::tempdir().expect("tempdir");
+    init_repo(repo.path());
+    let nested = repo.path().join("nested");
+    std::fs::create_dir(&nested).expect("mkdir");
+    let plain = tempfile::tempdir().expect("tempdir");
+
+    assert!(
+        git::is_repo_root(repo.path()).await,
+        "the repo's top level is a root"
+    );
+    assert!(
+        !git::is_repo_root(&nested).await,
+        "a subfolder inside the repo is not a root"
+    );
+    assert!(
+        !git::is_repo_root(plain.path()).await,
+        "a plain directory is not a root"
+    );
+}
+
+#[tokio::test]
+async fn prepare_repo_creates_a_dedicated_repo_inside_a_parent_repo() {
+    // A project folder that merely sits inside an outer repository.
+    let parent = tempfile::tempdir().expect("tempdir");
+    init_repo(parent.path());
+    let project = parent.path().join("project");
+    std::fs::create_dir(&project).expect("mkdir");
+    std::fs::write(project.join("code.txt"), "hello\n").expect("write");
+    assert!(!git::is_repo_root(&project).await);
+
+    git::prepare_repo(&project).await.expect("prepare");
+
+    assert!(
+        git::is_repo_root(&project).await,
+        "the project folder became its own repository root"
+    );
+    assert!(git::has_head(&project).await, "with its own initial commit");
+    assert!(
+        project.join(".git").exists(),
+        "the project folder has its own .git, not the parent's"
+    );
+}
+
+#[tokio::test]
 async fn ensure_gitignored_creates_appends_and_dedups() {
     let repo = tempfile::tempdir().expect("tempdir");
     let root = repo.path();
