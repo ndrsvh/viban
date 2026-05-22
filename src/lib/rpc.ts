@@ -16,7 +16,7 @@ import type {
 import type { FileDiff } from "@/types/diff";
 import type { CommandOutput } from "@/types/exec";
 import type { ServerHealth } from "@/types/server";
-import type { Message, Session } from "@/types/session";
+import type { Message, Session, TokenUsage } from "@/types/session";
 
 /** Result of `start_session` / `create_attempt`. */
 export interface StartSessionResult {
@@ -53,10 +53,12 @@ export const rpc = {
     invoke<null>("send_message", { sessionId, prompt }),
   listSessions: () => invoke<{ sessions: Session[] }>("list_sessions"),
   getSession: (sessionId: string) =>
-    invoke<{ session: Session; messages: Message[]; files: string[] }>(
-      "get_session",
-      { sessionId },
-    ),
+    invoke<{
+      session: Session;
+      messages: Message[];
+      files: string[];
+      usage: TokenUsage;
+    }>("get_session", { sessionId }),
 
   // -- board / tasks --------------------------------------------------------
   getBoard: () => invoke<BoardSnapshot>("get_board"),

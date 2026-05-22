@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { rpc } from "@/lib/rpc";
 import { cn } from "@/lib/utils";
 import type { AgentEvent } from "@/types/agent";
+import type { TokenUsage } from "@/types/session";
 
 type Role = "user" | "assistant" | "tool" | "error";
 
@@ -27,6 +28,12 @@ function roleOf(raw: string): Role {
   return raw === "user" || raw === "assistant" || raw === "tool" || raw === "error"
     ? raw
     : "assistant";
+}
+
+/** Formats an integer with comma thousands separators — locale-independent,
+ *  so it renders the same everywhere (and in tests). */
+function grouped(value: number): string {
+  return value.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
 /** Claude Code's file-editing tools and the input key carrying the path. */
@@ -62,6 +69,11 @@ export function ChatView({ sessionId, onSpawned }: ChatViewProps) {
   const [busy, setBusy] = useState(false);
   // Files the agent has edited this session — its footprint.
   const [files, setFiles] = useState<string[]>([]);
+  // Accumulated token usage for the session.
+  const [usage, setUsage] = useState<TokenUsage>({
+    input_tokens: 0,
+    output_tokens: 0,
+  });
   // Whether the session already exists server-side (vs. a fresh, unspawned one).
   const startedRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -97,15 +109,23 @@ export function ChatView({ sessionId, onSpawned }: ChatViewProps) {
           setBubbles((prev) => [...prev, makeBubble("error", event.message)]);
           setBusy(false);
           break;
-        case "result":
+        case "result": {
           if (event.is_error) {
             setBubbles((prev) => [
               ...prev,
               makeBubble("error", "the agent reported an error"),
             ]);
           }
+          const turn = event.usage;
+          if (turn) {
+            setUsage((prev) => ({
+              input_tokens: prev.input_tokens + turn.input_tokens,
+              output_tokens: prev.output_tokens + turn.output_tokens,
+            }));
+          }
           setBusy(false);
           break;
+        }
         default:
           break;
       }
@@ -125,6 +145,7 @@ export function ChatView({ sessionId, onSpawned }: ChatViewProps) {
           })),
         );
         setFiles(history.files);
+        setUsage(history.usage);
       })
       .catch(() => {
         // No row for this id yet — it is a brand-new session.
@@ -176,6 +197,11 @@ export function ChatView({ sessionId, onSpawned }: ChatViewProps) {
               {file}
             </span>
           ))}
+        </div>
+      )}
+      {(usage.input_tokens > 0 || usage.output_tokens > 0) && (
+        <div className="border-b px-4 py-1.5 text-xs text-muted-foreground">
+          {`Tokens: ${grouped(usage.input_tokens)} in · ${grouped(usage.output_tokens)} out`}
         </div>
       )}
       <ScrollArea className="flex-1">

@@ -65,6 +65,7 @@ describe("ChatView", () => {
             },
           ],
           files: [],
+          usage: { input_tokens: 0, output_tokens: 0 },
         });
       }
       return Promise.resolve(undefined);
@@ -121,6 +122,7 @@ describe("ChatView", () => {
             },
           ],
           files: [],
+          usage: { input_tokens: 0, output_tokens: 0 },
         });
       }
       return Promise.resolve(undefined);
@@ -147,7 +149,11 @@ describe("ChatView", () => {
   it("renders streamed agent events as they arrive", async () => {
     setInvoke((command) => {
       if (command === "get_session") {
-        return Promise.resolve({ messages: [], files: [] });
+        return Promise.resolve({
+          messages: [],
+          files: [],
+          usage: { input_tokens: 0, output_tokens: 0 },
+        });
       }
       return Promise.resolve(undefined);
     });
@@ -167,10 +173,42 @@ describe("ChatView", () => {
     expect(await screen.findByText("using Read")).toBeInTheDocument();
   });
 
+  it("shows accumulated token usage", async () => {
+    setInvoke((command) => {
+      if (command === "get_session") {
+        return Promise.resolve({
+          messages: [],
+          files: [],
+          usage: { input_tokens: 1000, output_tokens: 200 },
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    render(<ChatView sessionId="s1" onSpawned={vi.fn()} />);
+    // The total loaded from history.
+    expect(await screen.findByText(/1,000 in/)).toBeInTheDocument();
+
+    // A live result event with usage adds to the total.
+    const channel = openedChannel();
+    act(() => {
+      channel.onmessage?.({
+        type: "result",
+        is_error: false,
+        usage: { input_tokens: 500, output_tokens: 100 },
+      });
+    });
+    expect(await screen.findByText(/1,500 in/)).toBeInTheDocument();
+  });
+
   it("lists the files the session has touched", async () => {
     setInvoke((command) => {
       if (command === "get_session") {
-        return Promise.resolve({ messages: [], files: ["src/main.rs"] });
+        return Promise.resolve({
+          messages: [],
+          files: ["src/main.rs"],
+          usage: { input_tokens: 0, output_tokens: 0 },
+        });
       }
       return Promise.resolve(undefined);
     });
