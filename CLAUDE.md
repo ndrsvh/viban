@@ -386,6 +386,21 @@ Designed-for but out of scope for this doc:
 
 All these share the same `viban-server` binary and JSON-RPC protocol. Only the spawn/connect strategy differs per transport. Each gets its own ADR before implementation.
 
+## Post-MVP improvements
+
+Incremental features added after the MVP (Phases 1–5). Each is built TDD-first
+and ships as its own PR.
+
+### Merge from board
+
+A task card with a branch shows a **Merge** button. Confirming it runs
+`git.merge`: the task's branch is merged into the project's current branch,
+the worktree and branch are removed, the task's `worktree_path` / `branch`
+fields are cleared, and the task moves to the Done column. A conflicting
+merge is aborted and surfaces an error, leaving the worktree intact so the
+user can resolve it manually. (This is the "merge & cleanup" deferred from
+Phase 4.)
+
 ## Coding conventions
 
 ### Rust
