@@ -112,3 +112,34 @@ fn generate_token() -> String {
     }
     token
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{generate_token, parse_ready};
+
+    #[test]
+    fn parse_ready_reads_the_assigned_port() {
+        let port = parse_ready(r#"{"ready":true,"port":7400}"#).expect("a port");
+        assert_eq!(port, 7400);
+    }
+
+    #[test]
+    fn parse_ready_rejects_a_not_ready_line() {
+        assert!(parse_ready(r#"{"ready":false,"port":7400}"#).is_err());
+    }
+
+    #[test]
+    fn parse_ready_rejects_malformed_input() {
+        assert!(parse_ready("not json at all").is_err());
+        assert!(parse_ready("{}").is_err());
+    }
+
+    #[test]
+    fn generate_token_is_64_unique_hex_characters() {
+        let first = generate_token();
+        let second = generate_token();
+        assert_eq!(first.len(), 64);
+        assert!(first.chars().all(|ch| ch.is_ascii_hexdigit()));
+        assert_ne!(first, second, "tokens must not repeat");
+    }
+}

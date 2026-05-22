@@ -10,7 +10,7 @@ env:
 
 jobs:
   check:
-    name: Lint & typecheck
+    name: Lint, typecheck & frontend tests
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -28,6 +28,8 @@ jobs:
         run: npm run typecheck
       - name: ESLint
         run: npm run lint
+      - name: Frontend tests
+        run: npm run test
 
   build:
     name: Build (${{ matrix.os }})

@@ -27,3 +27,33 @@ pub fn now_millis() -> i64 {
         .map(|elapsed| elapsed.as_millis() as i64)
         .unwrap_or(0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_id_is_unique_and_a_valid_uuid() {
+        let a = new_id();
+        let b = new_id();
+        assert_ne!(a, b, "ids must be unique");
+        assert_eq!(a.len(), 36, "a uuid v4 string is 36 characters");
+        assert!(
+            uuid::Uuid::parse_str(&a).is_ok(),
+            "new_id must produce a valid uuid"
+        );
+    }
+
+    #[test]
+    fn now_millis_is_a_plausible_timestamp() {
+        let now = now_millis();
+        // Sanity bounds: after 2020-01-01 and before 2100-01-01.
+        assert!(now > 1_577_836_800_000, "timestamp should be after 2020");
+        assert!(now < 4_102_444_800_000, "timestamp should be before 2100");
+    }
+
+    #[test]
+    fn version_is_populated_from_cargo() {
+        assert!(!VERSION.is_empty(), "crate version must not be empty");
+    }
+}

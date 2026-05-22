@@ -320,4 +320,134 @@ mod tests {
         assert_eq!(reordered[0].id, "t1");
         assert_eq!(reordered[1].id, "t0");
     }
+
+    #[tokio::test]
+    async fn get_board_is_none_before_any_board_exists() {
+        let db = Db::open_in_memory().await.expect("open");
+        assert!(db.get_board().await.expect("get_board").is_none());
+    }
+
+    #[tokio::test]
+    async fn task_update_covers_worktree_fields_and_delete_removes_it() {
+        let db = Db::open_in_memory().await.expect("open");
+        let board = db.ensure_default_board("/tmp/proj").await.expect("board");
+        let columns = db.list_columns(board.id.clone()).await.expect("columns");
+
+        let task = Task {
+            id: "t1".into(),
+            column_id: columns[0].id.clone(),
+            title: "Original".into(),
+            description: "desc".into(),
+            position: 0,
+            session_id: None,
+            worktree_path: None,
+            branch: None,
+            created_at: 10,
+        };
+        db.create_task(task.clone()).await.expect("create");
+
+        let updated = Task {
+            title: "Renamed".into(),
+            session_id: Some("sess-1".into()),
+            worktree_path: Some("/tmp/wt".into()),
+            branch: Some("viban/renamed".into()),
+            ..task
+        };
+        db.update_task(updated).await.expect("update");
+
+        let fetched = db
+            .get_task("t1".into())
+            .await
+            .expect("get_task")
+            .expect("task exists");
+        assert_eq!(fetched.title, "Renamed");
+        assert_eq!(fetched.session_id.as_deref(), Some("sess-1"));
+        assert_eq!(fetched.worktree_path.as_deref(), Some("/tmp/wt"));
+        assert_eq!(fetched.branch.as_deref(), Some("viban/renamed"));
+
+        db.delete_task("t1".into()).await.expect("delete");
+        assert!(db.get_task("t1".into()).await.expect("get_task").is_none());
+    }
+
+    #[tokio::test]
+    async fn get_task_by_session_finds_the_linked_task() {
+        let db = Db::open_in_memory().await.expect("open");
+        let board = db.ensure_default_board("/tmp/proj").await.expect("board");
+        let columns = db.list_columns(board.id.clone()).await.expect("columns");
+
+        db.create_task(Task {
+            id: "t1".into(),
+            column_id: columns[0].id.clone(),
+            title: "Linked".into(),
+            description: String::new(),
+            position: 0,
+            session_id: Some("sess-42".into()),
+            worktree_path: None,
+            branch: None,
+            created_at: 0,
+        })
+        .await
+        .expect("create");
+
+        let found = db
+            .get_task_by_session("sess-42".into())
+            .await
+            .expect("query")
+            .expect("a linked task");
+        assert_eq!(found.id, "t1");
+        assert!(db
+            .get_task_by_session("missing".into())
+            .await
+            .expect("query")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn reorder_moves_a_task_into_another_column() {
+        let db = Db::open_in_memory().await.expect("open");
+        let board = db.ensure_default_board("/tmp/proj").await.expect("board");
+        let columns = db.list_columns(board.id.clone()).await.expect("columns");
+        let (backlog, in_progress) = (&columns[0], &columns[1]);
+
+        for (index, title) in ["a", "b"].iter().enumerate() {
+            db.create_task(Task {
+                id: format!("t{index}"),
+                column_id: backlog.id.clone(),
+                title: (*title).to_string(),
+                description: String::new(),
+                position: index as i64,
+                session_id: None,
+                worktree_path: None,
+                branch: None,
+                created_at: 0,
+            })
+            .await
+            .expect("create");
+        }
+
+        // Move t0 into the In Progress column; leave t1 in Backlog.
+        db.reorder_column(in_progress.id.clone(), vec!["t0".into()])
+            .await
+            .expect("reorder in_progress");
+        db.reorder_column(backlog.id.clone(), vec!["t1".into()])
+            .await
+            .expect("reorder backlog");
+
+        let tasks = db.list_tasks(board.id).await.expect("list");
+        let t0 = tasks.iter().find(|task| task.id == "t0").expect("t0");
+        let t1 = tasks.iter().find(|task| task.id == "t1").expect("t1");
+        assert_eq!(t0.column_id, in_progress.id);
+        assert_eq!(t0.position, 0);
+        assert_eq!(t1.column_id, backlog.id);
+    }
+
+    #[tokio::test]
+    async fn get_task_is_none_for_an_unknown_id() {
+        let db = Db::open_in_memory().await.expect("open");
+        assert!(db
+            .get_task("nope".into())
+            .await
+            .expect("get_task")
+            .is_none());
+    }
 }

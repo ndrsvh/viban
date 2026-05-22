@@ -255,4 +255,58 @@ mod tests {
             .expect("get")
             .is_none());
     }
+
+    #[tokio::test]
+    async fn list_sessions_returns_newest_first() {
+        let db = Db::open_in_memory().await.expect("open");
+        let mut older = session("s-old");
+        older.created_at = 100;
+        let mut newer = session("s-new");
+        newer.created_at = 200;
+        db.create_session(older).await.expect("create older");
+        db.create_session(newer).await.expect("create newer");
+
+        let sessions = db.list_sessions().await.expect("list");
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0].id, "s-new", "newest session comes first");
+        assert_eq!(sessions[1].id, "s-old");
+    }
+
+    #[tokio::test]
+    async fn messages_are_returned_in_chronological_order() {
+        let db = Db::open_in_memory().await.expect("open");
+        db.create_session(session("s1")).await.expect("create");
+        for (id, created_at) in [("m-late", 20), ("m-early", 10)] {
+            db.insert_message(Message {
+                id: id.into(),
+                session_id: "s1".into(),
+                role: "user".into(),
+                content: id.into(),
+                created_at,
+                raw_json: None,
+            })
+            .await
+            .expect("insert");
+        }
+        let messages = db.get_messages("s1".into()).await.expect("messages");
+        assert_eq!(messages[0].id, "m-early");
+        assert_eq!(messages[1].id, "m-late");
+    }
+
+    #[tokio::test]
+    async fn every_migration_is_recorded_once() {
+        let db = Db::open_in_memory().await.expect("open");
+        let versions = db
+            .conn
+            .call(|conn| -> rusqlite::Result<Vec<i64>> {
+                let mut stmt = conn.prepare("SELECT version FROM migrations ORDER BY version")?;
+                let rows = stmt
+                    .query_map([], |row| row.get(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await
+            .expect("query migration versions");
+        assert_eq!(versions, vec![1, 2, 3], "all migrations are recorded");
+    }
 }

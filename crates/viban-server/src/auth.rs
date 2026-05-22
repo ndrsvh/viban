@@ -35,3 +35,28 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     }
     diff == 0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::constant_time_eq;
+
+    #[test]
+    fn identical_slices_match() {
+        assert!(constant_time_eq(b"secret-token", b"secret-token"));
+        assert!(constant_time_eq(b"", b""));
+    }
+
+    #[test]
+    fn slices_of_equal_length_but_different_content_do_not_match() {
+        assert!(!constant_time_eq(b"secret-token", b"secret-tokeX"));
+        assert!(!constant_time_eq(b"abc", b"abd"));
+        assert!(!constant_time_eq(b"Xbc", b"abc"));
+    }
+
+    #[test]
+    fn slices_of_different_lengths_do_not_match() {
+        assert!(!constant_time_eq(b"short", b"longer-value"));
+        assert!(!constant_time_eq(b"", b"x"));
+        assert!(!constant_time_eq(b"prefix", b"prefix-extra"));
+    }
+}
