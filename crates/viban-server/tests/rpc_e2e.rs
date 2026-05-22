@@ -21,6 +21,15 @@ async fn server_health_reports_ok() {
 }
 
 #[tokio::test]
+async fn a_connection_with_the_wrong_token_is_closed() {
+    let server = TestServer::start().await;
+    assert!(
+        server.connection_rejected("not-the-real-token").await,
+        "the server must close a mis-authenticated connection",
+    );
+}
+
+#[tokio::test]
 async fn board_starts_with_four_columns_and_no_tasks() {
     let mut server = TestServer::start().await;
     let board = server.call("boards.get", Value::Null).await;

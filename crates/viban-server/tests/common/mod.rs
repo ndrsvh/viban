@@ -27,6 +27,7 @@ pub struct TestServer {
     workspace: PathBuf,
     server: Child,
     ws: Ws,
+    port: u16,
     next_id: i64,
 }
 
@@ -90,7 +91,27 @@ impl TestServer {
             workspace,
             server,
             ws,
+            port: port as u16,
             next_id: 1,
+        }
+    }
+
+    /// Opens a fresh connection, sends `token`, and reports whether the server
+    /// rejected it — closing the socket instead of serving requests. Call only
+    /// with a *wrong* token; a correct one keeps the socket open, in which case
+    /// the guard timeout fires and this reports "not rejected".
+    pub async fn connection_rejected(&self, token: &str) -> bool {
+        let (mut ws, _) = connect_async(format!("ws://127.0.0.1:{}", self.port))
+            .await
+            .expect("websocket connects");
+        ws.send(Message::text(token.to_string()))
+            .await
+            .expect("send token");
+        match tokio::time::timeout(Duration::from_secs(5), ws.next()).await {
+            Err(_) => false,
+            Ok(None) | Ok(Some(Err(_))) => true,
+            Ok(Some(Ok(Message::Close(_)))) => true,
+            Ok(Some(Ok(_))) => false,
         }
     }
 
