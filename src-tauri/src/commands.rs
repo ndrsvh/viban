@@ -6,6 +6,7 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 use tokio::sync::oneshot;
+use viban_core::types::TaskStatusUpdate;
 use viban_core::AgentEvent;
 
 use crate::AppState;
@@ -88,6 +89,39 @@ pub async fn open_session(
 pub async fn close_session(session_id: String, state: State<'_, AppState>) -> Result<(), String> {
     if let Some(client) = state.client().await {
         client.unsubscribe(&session_id).await;
+    }
+    Ok(())
+}
+
+/// Subscribes `on_event` to the `tasks` topic — live per-task agent status.
+/// Call this while the board is shown so its cards reflect agent activity.
+#[tauri::command]
+pub async fn watch_task_status(
+    on_event: Channel<TaskStatusUpdate>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let client = state.client().await.ok_or("server not connected")?;
+    let mut events = client.subscribe("tasks").await;
+    tauri::async_runtime::spawn(async move {
+        while let Some(value) = events.recv().await {
+            match serde_json::from_value::<TaskStatusUpdate>(value) {
+                Ok(update) => {
+                    if on_event.send(update).is_err() {
+                        break;
+                    }
+                }
+                Err(err) => tracing::warn!(%err, "dropping malformed task status"),
+            }
+        }
+    });
+    Ok(())
+}
+
+/// Stops forwarding `tasks` topic notifications.
+#[tauri::command]
+pub async fn unwatch_task_status(state: State<'_, AppState>) -> Result<(), String> {
+    if let Some(client) = state.client().await {
+        client.unsubscribe("tasks").await;
     }
     Ok(())
 }

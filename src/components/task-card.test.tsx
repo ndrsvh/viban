@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
@@ -10,7 +10,13 @@ import {
 } from "@dnd-kit/core";
 
 import { TaskCard } from "@/components/task-card";
+import { useBoardStore } from "@/stores/useBoardStore";
 import type { Task } from "@/types/board";
+
+afterEach(() => {
+  // The status dot reads the shared board store — clear it between tests.
+  useBoardStore.setState({ statuses: {} });
+});
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -146,6 +152,17 @@ describe("TaskCard", () => {
     renderCard(task, { onNewAttempt });
     await user.click(screen.getByRole("button", { name: "New attempt" }));
     expect(onNewAttempt).toHaveBeenCalledWith(task);
+  });
+
+  it("shows a live status dot once the task's agent reports", () => {
+    useBoardStore.setState({ statuses: { t1: "running" } });
+    renderCard(makeTask({ id: "t1" }));
+    expect(screen.getByLabelText("Agent running")).toBeInTheDocument();
+  });
+
+  it("shows no status dot for a task with no agent activity", () => {
+    renderCard(makeTask({ id: "t1" }));
+    expect(screen.queryByLabelText(/^Agent /)).not.toBeInTheDocument();
   });
 
   it("offers Merge only once the task has a branch", async () => {

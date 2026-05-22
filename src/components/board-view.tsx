@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Channel } from "@tauri-apps/api/core";
 import { X } from "lucide-react";
 import {
   closestCorners,
@@ -22,7 +23,8 @@ import { GitInitDialog } from "@/components/git-init-dialog";
 import { TaskDialog } from "@/components/task-dialog";
 import { rpc } from "@/lib/rpc";
 import { useBoardStore } from "@/stores/useBoardStore";
-import type { Task } from "@/types/board";
+import { toast } from "@/stores/useToastStore";
+import type { Task, TaskStatusUpdate } from "@/types/board";
 
 interface BoardViewProps {
   onOpenSession: (sessionId: string) => void;
@@ -45,6 +47,7 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
   const tasks = useBoardStore((state) => state.tasks);
   const loadBoard = useBoardStore((state) => state.loadBoard);
   const setColumnTasks = useBoardStore((state) => state.setColumnTasks);
+  const setStatus = useBoardStore((state) => state.setStatus);
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [hoverColumn, setHoverColumn] = useState<string | null>(null);
@@ -69,6 +72,27 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
   useEffect(() => {
     void loadBoard();
   }, [loadBoard]);
+
+  // Subscribe to the live task-status feed while the board is shown: the
+  // cards' status dots update in place, and a finished/failed agent toasts.
+  useEffect(() => {
+    const channel = new Channel<TaskStatusUpdate>();
+    channel.onmessage = (update) => {
+      setStatus(update.task_id, update.status);
+      if (update.status === "running") return;
+      const title = useBoardStore.getState().tasks[update.task_id]?.title;
+      const name = title ? `"${title}"` : "A task";
+      if (update.status === "done") {
+        toast.info(`${name} — the agent finished.`);
+      } else {
+        toast.error(`${name} — the agent failed.`);
+      }
+    };
+    void rpc.watchTaskStatus(channel);
+    return () => {
+      void rpc.unwatchTaskStatus();
+    };
+  }, [setStatus]);
 
   function columnOf(id: string): string | undefined {
     if (columnTasks[id]) return id;

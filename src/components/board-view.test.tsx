@@ -9,6 +9,11 @@ import type { Column, Task } from "@/types/board";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
+  // A stand-in for tauri's event Channel — the board's task-status feed
+  // constructs one; tests fire updates by calling its `onmessage`.
+  Channel: class {
+    onmessage: ((message: unknown) => void) | null = null;
+  },
 }));
 
 const invokeMock = vi.mocked(invoke);
@@ -46,7 +51,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 function boardWith(tasks: Task[], extra: InvokeImpl = () => Promise.resolve()) {
   setInvoke((command, args) => {
     if (command === "get_board") {
-      return Promise.resolve({ columns, tasks });
+      return Promise.resolve({ columns, tasks, statuses: {} });
     }
     return extra(command, args);
   });
@@ -55,7 +60,12 @@ function boardWith(tasks: Task[], extra: InvokeImpl = () => Promise.resolve()) {
 beforeEach(() => {
   invokeMock.mockReset();
   // The board store is a module singleton — clear it so tests don't leak.
-  useBoardStore.setState({ columns: [], columnTasks: {}, tasks: {} });
+  useBoardStore.setState({
+    columns: [],
+    columnTasks: {},
+    tasks: {},
+    statuses: {},
+  });
 });
 
 describe("BoardView", () => {
@@ -238,6 +248,25 @@ describe("BoardView", () => {
       expect(onOpenSession).toHaveBeenCalledWith("session-no-git"),
     );
     expect(startedWithoutGit).toBe(true);
+  });
+
+  it("updates a card's status dot from the live status feed", async () => {
+    boardWith([makeTask({ id: "t1", title: "Write tests" })]);
+    render(<BoardView onOpenSession={vi.fn()} onReview={vi.fn()} />);
+    await screen.findByText("Write tests");
+
+    // The board subscribed to the task-status feed on mount — fire an update.
+    const call = invokeMock.mock.calls.find(
+      ([command]) => command === "watch_task_status",
+    );
+    const args = call?.[1] as {
+      onEvent: { onmessage?: (message: unknown) => void };
+    };
+    args.onEvent.onmessage?.({ task_id: "t1", status: "running" });
+
+    expect(
+      await screen.findByLabelText("Agent running"),
+    ).toBeInTheDocument();
   });
 
   it("surfaces a dismissible banner when starting a session fails", async () => {

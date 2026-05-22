@@ -5,7 +5,14 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 
 import type { AgentEvent } from "@/types/agent";
-import type { Attempt, Board, Column, Task } from "@/types/board";
+import type {
+  AgentStatus,
+  Attempt,
+  Board,
+  Column,
+  Task,
+  TaskStatusUpdate,
+} from "@/types/board";
 import type { FileDiff } from "@/types/diff";
 import type { ServerHealth } from "@/types/server";
 import type { Message, Session } from "@/types/session";
@@ -21,6 +28,8 @@ export interface BoardSnapshot {
   board: Board;
   columns: Column[];
   tasks: Task[];
+  /** Live agent status per task id. */
+  statuses: Record<string, AgentStatus>;
 }
 
 export const rpc = {
@@ -34,6 +43,9 @@ export const rpc = {
     invoke<null>("open_session", { sessionId, onEvent }),
   closeSession: (sessionId: string) =>
     invoke<null>("close_session", { sessionId }),
+  watchTaskStatus: (onEvent: Channel<TaskStatusUpdate>) =>
+    invoke<null>("watch_task_status", { onEvent }),
+  unwatchTaskStatus: () => invoke<null>("unwatch_task_status"),
   spawnSession: (sessionId: string, prompt: string) =>
     invoke<null>("spawn_session", { sessionId, prompt }),
   sendMessage: (sessionId: string, prompt: string) =>

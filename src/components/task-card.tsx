@@ -3,7 +3,21 @@ import { CSS } from "@dnd-kit/utilities";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { Task } from "@/types/board";
+import { useBoardStore } from "@/stores/useBoardStore";
+import type { AgentStatus, Task } from "@/types/board";
+
+/** Tailwind classes for the live-status dot, by agent status. */
+const STATUS_DOT: Record<AgentStatus, string> = {
+  running: "animate-pulse bg-amber-500",
+  done: "bg-emerald-500",
+  failed: "bg-red-500",
+};
+
+const STATUS_LABEL: Record<AgentStatus, string> = {
+  running: "Agent running",
+  done: "Agent finished",
+  failed: "Agent failed",
+};
 
 interface TaskCardProps {
   task: Task;
@@ -28,6 +42,7 @@ export function TaskCard({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: task.id });
   const sessionId = task.session_id;
+  const status = useBoardStore((state) => state.statuses[task.id]);
 
   return (
     <div
@@ -40,7 +55,19 @@ export function TaskCard({
         isDragging && "opacity-50",
       )}
     >
-      <p className="font-medium">{task.title}</p>
+      <div className="flex items-center gap-1.5">
+        {status && (
+          <span
+            className={cn(
+              "h-2 w-2 shrink-0 rounded-full",
+              STATUS_DOT[status],
+            )}
+            title={STATUS_LABEL[status]}
+            aria-label={STATUS_LABEL[status]}
+          />
+        )}
+        <p className="font-medium">{task.title}</p>
+      </div>
       {task.description && (
         <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
           {task.description}

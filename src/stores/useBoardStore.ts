@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 import { rpc } from "@/lib/rpc";
-import type { Column, Task } from "@/types/board";
+import type { AgentStatus, Column, Task } from "@/types/board";
 
 interface BoardState {
   columns: Column[];
@@ -9,23 +9,28 @@ interface BoardState {
   columnTasks: Record<string, string[]>;
   /** Every task on the board, keyed by id. */
   tasks: Record<string, Task>;
+  /** Live agent status per task id. */
+  statuses: Record<string, AgentStatus>;
   /** Fetches the board and replaces all board state. Never throws. */
   loadBoard: () => Promise<void>;
   /** Replaces the per-column task ordering — used for optimistic drag moves. */
   setColumnTasks: (columnTasks: Record<string, string[]>) => void;
+  /** Applies a single live agent-status update. */
+  setStatus: (taskId: string, status: AgentStatus) => void;
 }
 
 /**
  * The Kanban board's shared state.
  *
  * It lives in a store rather than `BoardView`'s component state so the board
- * can be updated from outside the view — e.g. a live task-status feed pushing
- * changes — without prop-drilling or lifting state into `App`.
+ * can be updated from outside the view — the live task-status feed pushes
+ * `setStatus` updates straight in — without prop-drilling or lifting state.
  */
 export const useBoardStore = create<BoardState>((set) => ({
   columns: [],
   columnTasks: {},
   tasks: {},
+  statuses: {},
   loadBoard: async () => {
     try {
       const result = await rpc.getBoard();
@@ -36,10 +41,12 @@ export const useBoardStore = create<BoardState>((set) => ({
         tasks[task.id] = task;
         (columnTasks[task.column_id] ??= []).push(task.id);
       }
-      set({ columns: result.columns, columnTasks, tasks });
+      set({ columns: result.columns, columnTasks, tasks, statuses: result.statuses });
     } catch (err) {
       console.error(err);
     }
   },
   setColumnTasks: (columnTasks) => set({ columnTasks }),
+  setStatus: (taskId, status) =>
+    set((state) => ({ statuses: { ...state.statuses, [taskId]: status } })),
 }));
