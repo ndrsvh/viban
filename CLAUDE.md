@@ -401,6 +401,13 @@ merge is aborted and surfaces an error, leaving the worktree intact so the
 user can resolve it manually. (This is the "merge & cleanup" deferred from
 Phase 4.)
 
+### AI-generated commit messages
+
+When a review is accepted (`git.commit`), the commit message is generated from
+the worktree's diff by a one-shot `claude -p` call rather than always being
+the task title. The task title is the fallback when the CLI is unavailable or
+there are no changes, so commits always succeed offline.
+
 ### Multiple attempts per task
 
 A task can be run by the agent more than once. Each run is an **attempt** with
