@@ -64,6 +64,7 @@ describe("ChatView", () => {
               raw_json: null,
             },
           ],
+          files: [],
         });
       }
       return Promise.resolve(undefined);
@@ -119,6 +120,7 @@ describe("ChatView", () => {
               raw_json: null,
             },
           ],
+          files: [],
         });
       }
       return Promise.resolve(undefined);
@@ -145,7 +147,7 @@ describe("ChatView", () => {
   it("renders streamed agent events as they arrive", async () => {
     setInvoke((command) => {
       if (command === "get_session") {
-        return Promise.resolve({ messages: [] });
+        return Promise.resolve({ messages: [], files: [] });
       }
       return Promise.resolve(undefined);
     });
@@ -163,6 +165,30 @@ describe("ChatView", () => {
       channel.onmessage?.({ type: "tool_use", name: "Read", input: {} });
     });
     expect(await screen.findByText("using Read")).toBeInTheDocument();
+  });
+
+  it("lists the files the session has touched", async () => {
+    setInvoke((command) => {
+      if (command === "get_session") {
+        return Promise.resolve({ messages: [], files: ["src/main.rs"] });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    render(<ChatView sessionId="s1" onSpawned={vi.fn()} />);
+    // The footprint loaded from history.
+    expect(await screen.findByText("src/main.rs")).toBeInTheDocument();
+
+    // A live file-editing tool call adds another file.
+    const channel = openedChannel();
+    act(() => {
+      channel.onmessage?.({
+        type: "tool_use",
+        name: "Edit",
+        input: { file_path: "src/lib.rs" },
+      });
+    });
+    expect(await screen.findByText("src/lib.rs")).toBeInTheDocument();
   });
 
   it("shows an error bubble when spawning fails", async () => {
