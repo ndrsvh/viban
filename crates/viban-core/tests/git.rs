@@ -4,7 +4,13 @@
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use tokio::sync::Mutex;
 use viban_core::git;
+
+/// Each test here spawns several `git` subprocesses; running many at once has
+/// shown intermittent failures under heavy load (file locking on Windows), so
+/// the tests take this lock and run one at a time.
+static GIT_TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
 /// Runs `git args` in `dir`, panicking on failure.
 fn run_git(dir: &Path, args: &[&str]) {
@@ -30,6 +36,7 @@ fn init_repo(dir: &Path) {
 
 #[tokio::test]
 async fn is_git_repo_distinguishes_repos_from_plain_directories() {
+    let _guard = GIT_TEST_LOCK.lock().await;
     let repo = tempfile::tempdir().expect("tempdir");
     let plain = tempfile::tempdir().expect("tempdir");
     init_repo(repo.path());
@@ -43,6 +50,7 @@ async fn is_git_repo_distinguishes_repos_from_plain_directories() {
 
 #[tokio::test]
 async fn ensure_gitignored_creates_appends_and_dedups() {
+    let _guard = GIT_TEST_LOCK.lock().await;
     let repo = tempfile::tempdir().expect("tempdir");
     let root = repo.path();
     let gitignore = root.join(".gitignore");
@@ -76,6 +84,7 @@ async fn ensure_gitignored_creates_appends_and_dedups() {
 
 #[tokio::test]
 async fn ensure_gitignored_appends_cleanly_without_a_trailing_newline() {
+    let _guard = GIT_TEST_LOCK.lock().await;
     let repo = tempfile::tempdir().expect("tempdir");
     let root = repo.path();
     // An existing file with no trailing newline.
@@ -92,6 +101,7 @@ async fn ensure_gitignored_appends_cleanly_without_a_trailing_newline() {
 
 #[tokio::test]
 async fn worktree_add_remove_and_branch_delete_round_trip() {
+    let _guard = GIT_TEST_LOCK.lock().await;
     let repo = tempfile::tempdir().expect("tempdir");
     let root = repo.path();
     init_repo(root);
@@ -126,6 +136,7 @@ async fn worktree_add_remove_and_branch_delete_round_trip() {
 
 #[tokio::test]
 async fn worktree_remove_without_force_fails_on_uncommitted_changes() {
+    let _guard = GIT_TEST_LOCK.lock().await;
     let repo = tempfile::tempdir().expect("tempdir");
     let root = repo.path();
     init_repo(root);
