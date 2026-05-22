@@ -21,6 +21,8 @@ interface AppShellProps {
   taskList: ReactNode;
   /** The work-area content. */
   children: ReactNode;
+  /** The right-hand inspector panel; omitted (null) when no task is open. */
+  inspector: ReactNode;
 }
 
 /** The last path segment of a project path, for display. */
@@ -50,6 +52,7 @@ export function AppShell({
   boardActive,
   taskList,
   children,
+  inspector,
 }: AppShellProps) {
   const server = SERVER_STATUS[serverStatus];
   return (
@@ -74,6 +77,7 @@ export function AppShell({
         </nav>
         {taskList}
         <div className="flex-1 overflow-hidden">{children}</div>
+        {inspector}
       </div>
       <footer className="flex h-7 shrink-0 items-center gap-3 border-t px-3 text-xs text-muted-foreground">
         <span className="flex items-center gap-1.5">

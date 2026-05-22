@@ -11,6 +11,7 @@ const baseProps = {
   onGoBoard: vi.fn(),
   boardActive: true,
   taskList: <div />,
+  inspector: null,
 };
 
 describe("AppShell", () => {
@@ -30,6 +31,15 @@ describe("AppShell", () => {
       </AppShell>,
     );
     expect(screen.getByText("task list")).toBeInTheDocument();
+  });
+
+  it("renders the inspector slot", () => {
+    render(
+      <AppShell {...baseProps} inspector={<p>inspector</p>}>
+        <div />
+      </AppShell>,
+    );
+    expect(screen.getByText("inspector")).toBeInTheDocument();
   });
 
   it("shows the project name and a connected status", () => {

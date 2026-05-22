@@ -3,6 +3,7 @@ import { Channel } from "@tauri-apps/api/core";
 
 import { AppShell, type ServerStatus } from "@/components/app-shell";
 import { BoardView } from "@/components/board-view";
+import { Inspector } from "@/components/inspector";
 import { TaskDetail } from "@/components/task-detail";
 import { TaskListPanel } from "@/components/task-list-panel";
 import { Button } from "@/components/ui/button";
@@ -197,6 +198,7 @@ export default function App() {
           onOpenSession={openSession}
         />
       }
+      inspector={detailTask ? <Inspector task={detailTask} /> : null}
     >
       <div className="flex h-full flex-col">
         {projectError && (
