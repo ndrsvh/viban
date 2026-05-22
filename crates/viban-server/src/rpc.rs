@@ -4,12 +4,17 @@
 //! `sessions.send_message`, `sessions.list`, `sessions.get`. A running agent
 //! streams its output as `events.update` notifications, and every session and
 //! message is persisted to SQLite so conversations survive a restart.
+//!
+//! Handlers return `Result<Value, RpcError>`. Any `anyhow::Error` bubbling up
+//! from `viban-core` converts into an internal `RpcError` via `?` (see the
+//! `From` impl), so handler bodies stay free of error-mapping boilerplate.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, Mutex};
@@ -70,6 +75,15 @@ impl RpcError {
     }
     fn internal(message: impl Into<String>) -> Self {
         Self::new(-32603, message)
+    }
+}
+
+/// Any `anyhow` error from the core crate becomes an internal JSON-RPC error,
+/// carrying the full context chain (`{:#}`) as the message. This lets handlers
+/// use `?` directly on `viban-core` calls instead of mapping every error.
+impl From<anyhow::Error> for RpcError {
+    fn from(err: anyhow::Error) -> Self {
+        RpcError::internal(format!("{err:#}"))
     }
 }
 
@@ -164,16 +178,11 @@ async fn agents_spawn(
             created_at: now_millis(),
             project_path: workdir.display().to_string(),
         })
-        .await
-        .map_err(|err| RpcError::internal(format!("failed to create session: {err}")))?;
+        .await?;
     persist_user_message(&ctx.db, &session_id, prompt).await?;
 
-    let (mut agent, events) = spawn_claude(&workdir, None)
-        .map_err(|err| RpcError::internal(format!("failed to spawn agent: {err}")))?;
-    agent
-        .send_message(prompt)
-        .await
-        .map_err(|err| RpcError::internal(format!("failed to send prompt: {err}")))?;
+    let (mut agent, events) = spawn_claude(&workdir, None)?;
+    agent.send_message(prompt).await?;
 
     registry.lock().await.insert(session_id.clone(), agent);
     spawn_event_pump(
@@ -203,10 +212,7 @@ async fn sessions_send_message(
         let mut sessions = registry.lock().await;
         match sessions.get_mut(&session_id) {
             Some(agent) => {
-                agent
-                    .send_message(prompt)
-                    .await
-                    .map_err(|err| RpcError::internal(format!("failed to send message: {err}")))?;
+                agent.send_message(prompt).await?;
                 true
             }
             None => false,
@@ -218,20 +224,15 @@ async fn sessions_send_message(
         let stored = ctx
             .db
             .get_session(session_id.clone())
-            .await
-            .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+            .await?
             .ok_or_else(|| RpcError::invalid_params(format!("unknown session: {session_id}")))?;
         let claude_session_id = stored
             .claude_session_id
             .ok_or_else(|| RpcError::internal("session cannot be resumed: no Claude Code id"))?;
 
         let (mut agent, events) =
-            spawn_claude(Path::new(&stored.project_path), Some(&claude_session_id))
-                .map_err(|err| RpcError::internal(format!("failed to resume agent: {err}")))?;
-        agent
-            .send_message(prompt)
-            .await
-            .map_err(|err| RpcError::internal(format!("failed to send message: {err}")))?;
+            spawn_claude(Path::new(&stored.project_path), Some(&claude_session_id))?;
+        agent.send_message(prompt).await?;
 
         registry.lock().await.insert(session_id.clone(), agent);
         spawn_event_pump(
@@ -249,11 +250,7 @@ async fn sessions_send_message(
 
 /// Lists every persisted session, newest first.
 async fn sessions_list(ctx: &Context) -> Result<Value, RpcError> {
-    let sessions = ctx
-        .db
-        .list_sessions()
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+    let sessions = ctx.db.list_sessions().await?;
     Ok(json!({ "sessions": sessions }))
 }
 
@@ -263,14 +260,9 @@ async fn sessions_get(params: Value, ctx: &Context) -> Result<Value, RpcError> {
     let session = ctx
         .db
         .get_session(session_id.clone())
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+        .await?
         .ok_or_else(|| RpcError::invalid_params(format!("unknown session: {session_id}")))?;
-    let messages = ctx
-        .db
-        .get_messages(session_id)
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+    let messages = ctx.db.get_messages(session_id).await?;
     Ok(json!({ "session": session, "messages": messages }))
 }
 
@@ -279,19 +271,10 @@ async fn boards_get(ctx: &Context) -> Result<Value, RpcError> {
     let board = ctx
         .db
         .get_board()
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+        .await?
         .ok_or_else(|| RpcError::internal("no board exists"))?;
-    let columns = ctx
-        .db
-        .list_columns(board.id.clone())
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
-    let tasks = ctx
-        .db
-        .list_tasks(board.id.clone())
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+    let columns = ctx.db.list_columns(board.id.clone()).await?;
+    let tasks = ctx.db.list_tasks(board.id.clone()).await?;
     Ok(json!({ "board": board, "columns": columns, "tasks": tasks }))
 }
 
@@ -308,14 +291,12 @@ async fn tasks_create(params: Value, ctx: &Context) -> Result<Value, RpcError> {
     let board = ctx
         .db
         .get_board()
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+        .await?
         .ok_or_else(|| RpcError::internal("no board exists"))?;
     let position = ctx
         .db
         .list_tasks(board.id)
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+        .await?
         .iter()
         .filter(|task| task.column_id == column_id)
         .count() as i64;
@@ -331,10 +312,7 @@ async fn tasks_create(params: Value, ctx: &Context) -> Result<Value, RpcError> {
         branch: None,
         created_at: now_millis(),
     };
-    ctx.db
-        .create_task(task.clone())
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+    ctx.db.create_task(task.clone()).await?;
     Ok(json!({ "task": task }))
 }
 
@@ -344,8 +322,7 @@ async fn tasks_update(params: Value, ctx: &Context) -> Result<Value, RpcError> {
     let mut task = ctx
         .db
         .get_task(task_id.clone())
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+        .await?
         .ok_or_else(|| RpcError::invalid_params(format!("unknown task: {task_id}")))?;
 
     if let Some(title) = params.get("title").and_then(Value::as_str) {
@@ -358,10 +335,7 @@ async fn tasks_update(params: Value, ctx: &Context) -> Result<Value, RpcError> {
         task.session_id = Some(session_id.to_string());
     }
 
-    ctx.db
-        .update_task(task.clone())
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+    ctx.db.update_task(task.clone()).await?;
     Ok(json!({ "task": task }))
 }
 
@@ -374,11 +348,7 @@ async fn tasks_delete(
     let task_id = str_param(&params, "task_id")?.to_string();
 
     // Tear down every attempt's worktree, branch, and live agent.
-    let attempts = ctx
-        .db
-        .list_attempts(task_id.clone())
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+    let attempts = ctx.db.list_attempts(task_id.clone()).await?;
     for attempt in &attempts {
         if let Some(session_id) = &attempt.session_id {
             registry.lock().await.remove(session_id);
@@ -397,10 +367,7 @@ async fn tasks_delete(
         }
     }
 
-    ctx.db
-        .delete_task(task_id)
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+    ctx.db.delete_task(task_id).await?;
     Ok(json!({ "ok": true }))
 }
 
@@ -432,8 +399,7 @@ async fn tasks_start_session(params: Value, ctx: &Context) -> Result<Value, RpcE
     let mut task = ctx
         .db
         .get_task(task_id.clone())
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+        .await?
         .ok_or_else(|| RpcError::invalid_params(format!("unknown task: {task_id}")))?;
 
     if let Some(session_id) = &task.session_id {
@@ -452,9 +418,7 @@ async fn tasks_start_session(params: Value, ctx: &Context) -> Result<Value, RpcE
         if !init_git {
             return Ok(json!({ "needs_git_init": true }));
         }
-        git::prepare_repo(&ctx.workspace)
-            .await
-            .map_err(|err| RpcError::internal(format!("failed to initialize git: {err}")))?;
+        git::prepare_repo(&ctx.workspace).await?;
     }
 
     let session_id = create_task_attempt(ctx, &mut task, true).await?;
@@ -480,13 +444,11 @@ async fn create_task_attempt(
         let branch = format!("viban/{}-{}", git::slugify(&task.title), id_fragment);
         let worktree_path = ctx.data_dir.join("worktrees").join(&attempt_id);
         if let Some(parent) = worktree_path.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(|err| {
-                RpcError::internal(format!("failed to create worktree dir: {err}"))
-            })?;
+            tokio::fs::create_dir_all(parent)
+                .await
+                .context("failed to create the worktree directory")?;
         }
-        git::worktree_add(&ctx.workspace, &worktree_path, &branch)
-            .await
-            .map_err(|err| RpcError::internal(format!("failed to create worktree: {err}")))?;
+        git::worktree_add(&ctx.workspace, &worktree_path, &branch).await?;
         (Some(worktree_path.display().to_string()), Some(branch))
     } else {
         (None, None)
@@ -501,16 +463,12 @@ async fn create_task_attempt(
             branch: branch.clone(),
             created_at: now_millis(),
         })
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+        .await?;
 
     task.session_id = Some(session_id.clone());
     task.worktree_path = worktree_path;
     task.branch = branch;
-    ctx.db
-        .update_task(task.clone())
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+    ctx.db.update_task(task.clone()).await?;
 
     Ok(session_id)
 }
@@ -524,8 +482,7 @@ async fn attempts_create(params: Value, ctx: &Context) -> Result<Value, RpcError
     let mut task = ctx
         .db
         .get_task(task_id.clone())
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+        .await?
         .ok_or_else(|| RpcError::invalid_params(format!("unknown task: {task_id}")))?;
 
     let session_id = create_task_attempt(ctx, &mut task, repo_ready(ctx).await).await?;
@@ -535,11 +492,7 @@ async fn attempts_create(params: Value, ctx: &Context) -> Result<Value, RpcError
 /// Lists a task's attempts, newest first.
 async fn attempts_list(params: Value, ctx: &Context) -> Result<Value, RpcError> {
     let task_id = str_param(&params, "task_id")?.to_string();
-    let attempts = ctx
-        .db
-        .list_attempts(task_id)
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+    let attempts = ctx.db.list_attempts(task_id).await?;
     Ok(json!({ "attempts": attempts }))
 }
 
@@ -550,23 +503,18 @@ async fn attempts_activate(params: Value, ctx: &Context) -> Result<Value, RpcErr
     let attempt = ctx
         .db
         .get_attempt(attempt_id.clone())
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+        .await?
         .ok_or_else(|| RpcError::invalid_params(format!("unknown attempt: {attempt_id}")))?;
     let mut task = ctx
         .db
         .get_task(attempt.task_id.clone())
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+        .await?
         .ok_or_else(|| RpcError::internal("attempt references an unknown task"))?;
 
     task.session_id = attempt.session_id;
     task.worktree_path = attempt.worktree_path;
     task.branch = attempt.branch;
-    ctx.db
-        .update_task(task)
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+    ctx.db.update_task(task).await?;
     Ok(json!({ "ok": true }))
 }
 
@@ -576,8 +524,7 @@ async fn agent_workdir(ctx: &Context, session_id: &str) -> Result<PathBuf, RpcEr
     let attempt = ctx
         .db
         .get_attempt_by_session(session_id.to_string())
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+        .await?;
     Ok(attempt
         .and_then(|attempt| attempt.worktree_path)
         .map(PathBuf::from)
@@ -588,9 +535,7 @@ async fn agent_workdir(ctx: &Context, session_id: &str) -> Result<PathBuf, RpcEr
 async fn git_diff(params: Value, ctx: &Context) -> Result<Value, RpcError> {
     let task_id = str_param(&params, "task_id")?;
     let (_task, worktree) = task_worktree(ctx, task_id).await?;
-    let files = git::worktree_diff(&worktree)
-        .await
-        .map_err(|err| RpcError::internal(format!("failed to diff worktree: {err}")))?;
+    let files = git::worktree_diff(&worktree).await?;
     Ok(json!({ "files": files }))
 }
 
@@ -602,9 +547,7 @@ async fn git_commit(params: Value, ctx: &Context) -> Result<Value, RpcError> {
     let (mut task, worktree) = task_worktree(ctx, task_id).await?;
     let files = git::worktree_diff(&worktree).await.unwrap_or_default();
     let message = generate_commit_message(&worktree, &files, &task.title).await;
-    git::commit_all(&worktree, &message)
-        .await
-        .map_err(|err| RpcError::internal(format!("failed to commit worktree: {err}")))?;
+    git::commit_all(&worktree, &message).await?;
     move_task_to_column(ctx, &mut task, "Review").await?;
     Ok(json!({ "ok": true }))
 }
@@ -613,9 +556,7 @@ async fn git_commit(params: Value, ctx: &Context) -> Result<Value, RpcError> {
 async fn git_restore(params: Value, ctx: &Context) -> Result<Value, RpcError> {
     let task_id = str_param(&params, "task_id")?;
     let (mut task, worktree) = task_worktree(ctx, task_id).await?;
-    git::discard_all(&worktree)
-        .await
-        .map_err(|err| RpcError::internal(format!("failed to discard worktree: {err}")))?;
+    git::discard_all(&worktree).await?;
     move_task_to_column(ctx, &mut task, "In Progress").await?;
     Ok(json!({ "ok": true }))
 }
@@ -630,9 +571,7 @@ async fn git_merge(params: Value, ctx: &Context) -> Result<Value, RpcError> {
         .clone()
         .ok_or_else(|| RpcError::invalid_params(format!("task {task_id} has no branch")))?;
 
-    git::merge_branch(&ctx.workspace, &branch)
-        .await
-        .map_err(|err| RpcError::internal(format!("failed to merge: {err}")))?;
+    git::merge_branch(&ctx.workspace, &branch).await?;
 
     // The merge landed — tear down the task's worktree and branch.
     if let Err(err) = git::worktree_remove(&ctx.workspace, &worktree, true).await {
@@ -653,8 +592,7 @@ async fn task_worktree(ctx: &Context, task_id: &str) -> Result<(Task, PathBuf), 
     let task = ctx
         .db
         .get_task(task_id.to_string())
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+        .await?
         .ok_or_else(|| RpcError::invalid_params(format!("unknown task: {task_id}")))?;
     let worktree = task
         .worktree_path
@@ -672,14 +610,9 @@ async fn move_task_to_column(
     let board = ctx
         .db
         .get_board()
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+        .await?
         .ok_or_else(|| RpcError::internal("no board exists"))?;
-    let columns = ctx
-        .db
-        .list_columns(board.id.clone())
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+    let columns = ctx.db.list_columns(board.id.clone()).await?;
     let column = columns
         .iter()
         .find(|column| column.name == column_name)
@@ -687,18 +620,14 @@ async fn move_task_to_column(
     let position = ctx
         .db
         .list_tasks(board.id)
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+        .await?
         .iter()
         .filter(|other| other.column_id == column.id && other.id != task.id)
         .count() as i64;
 
     task.column_id = column.id.clone();
     task.position = position;
-    ctx.db
-        .update_task(task.clone())
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+    ctx.db.update_task(task.clone()).await?;
     Ok(())
 }
 
@@ -713,10 +642,7 @@ async fn tasks_reorder(params: Value, ctx: &Context) -> Result<Value, RpcError> 
         .filter_map(Value::as_str)
         .map(String::from)
         .collect::<Vec<_>>();
-    ctx.db
-        .reorder_column(column_id, task_ids)
-        .await
-        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+    ctx.db.reorder_column(column_id, task_ids).await?;
     Ok(json!({ "ok": true }))
 }
 
@@ -792,8 +718,8 @@ async fn persist_user_message(db: &Db, session_id: &str, prompt: &str) -> Result
         created_at: now_millis(),
         raw_json: None,
     })
-    .await
-    .map_err(|err| RpcError::internal(format!("failed to persist message: {err}")))
+    .await?;
+    Ok(())
 }
 
 /// The session's first prompt line, trimmed to ~50 characters.
@@ -832,7 +758,7 @@ fn serialize(response: Response) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::make_title;
+    use super::{make_title, RpcError};
 
     #[test]
     fn make_title_keeps_a_short_prompt_verbatim() {
@@ -862,5 +788,22 @@ mod tests {
     fn make_title_falls_back_for_blank_input() {
         assert_eq!(make_title(""), "Untitled session");
         assert_eq!(make_title("   \n  "), "Untitled session");
+    }
+
+    #[test]
+    fn anyhow_errors_convert_to_internal_rpc_errors() {
+        let err: RpcError = anyhow::anyhow!("disk on fire").into();
+        assert_eq!(err.code, -32603);
+        assert!(err.message.contains("disk on fire"));
+    }
+
+    #[test]
+    fn converted_errors_keep_the_anyhow_context_chain() {
+        let err: RpcError = anyhow::anyhow!("root cause")
+            .context("while doing the thing")
+            .into();
+        // `{:#}` flattens the whole chain into the message.
+        assert!(err.message.contains("while doing the thing"));
+        assert!(err.message.contains("root cause"));
     }
 }
