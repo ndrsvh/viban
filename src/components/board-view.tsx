@@ -21,11 +21,18 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 
+import { GitInitDialog } from "@/components/git-init-dialog";
 import { TaskCard } from "@/components/task-card";
 import { TaskDialog } from "@/components/task-dialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { Column, Task } from "@/types/board";
+
+/** Result of the `start_session` command. */
+interface StartSessionResult {
+  session_id?: string;
+  needs_git_init?: boolean;
+}
 
 interface BoardViewProps {
   onOpenSession: (sessionId: string) => void;
@@ -50,6 +57,9 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogTask, setDialogTask] = useState<Task | null>(null);
   const [dialogColumn, setDialogColumn] = useState<string | null>(null);
+  // The task awaiting git-init confirmation, and whether init is running.
+  const [gitInitTask, setGitInitTask] = useState<Task | null>(null);
+  const [gitInitBusy, setGitInitBusy] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -124,17 +134,35 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
     }
   }
 
-  async function handleStartSession(task: Task) {
+  async function handleStartSession(task: Task, initGit = false) {
     try {
-      // The server creates the worktree + branch and links a session.
-      const sessionId = await invoke<string>("start_session", {
+      // The server creates the worktree + branch and links a session. If the
+      // project folder is not a git repo yet, it asks for confirmation first.
+      const result = await invoke<StartSessionResult>("start_session", {
         taskId: task.id,
+        initGit,
       });
-      await loadBoard();
-      onOpenSession(sessionId);
+      if (result.needs_git_init) {
+        setGitInitTask(task);
+        return;
+      }
+      setGitInitTask(null);
+      if (result.session_id) {
+        await loadBoard();
+        onOpenSession(result.session_id);
+      }
     } catch (err) {
       console.error(err);
+      setGitInitTask(null);
     }
+  }
+
+  async function confirmGitInit() {
+    const task = gitInitTask;
+    if (!task) return;
+    setGitInitBusy(true);
+    await handleStartSession(task, true);
+    setGitInitBusy(false);
   }
 
   function openCreate(columnId: string) {
@@ -195,6 +223,15 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
         columnId={dialogColumn}
         onOpenChange={setDialogOpen}
         onChanged={loadBoard}
+      />
+
+      <GitInitDialog
+        open={gitInitTask !== null}
+        busy={gitInitBusy}
+        onConfirm={() => void confirmGitInit()}
+        onOpenChange={(open) => {
+          if (!open && !gitInitBusy) setGitInitTask(null);
+        }}
       />
     </div>
   );
