@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
+use crate::types::TokenUsage;
+
 /// A normalized event from a running Claude Code session.
 ///
 /// Claude Code's stdout schema shifts between CLI versions, so only the
@@ -31,7 +33,11 @@ pub enum AgentEvent {
         input: Value,
     },
     /// The turn finished.
-    Result { is_error: bool },
+    Result {
+        is_error: bool,
+        /// Token counts for the turn, when the result reports them.
+        usage: Option<TokenUsage>,
+    },
     /// A fatal error in the session.
     Error { message: String },
     /// An unclassified event, passed through verbatim.
@@ -71,7 +77,13 @@ mod tests {
                 },
                 "tool_use",
             ),
-            (AgentEvent::Result { is_error: true }, "result"),
+            (
+                AgentEvent::Result {
+                    is_error: true,
+                    usage: None,
+                },
+                "result",
+            ),
             (
                 AgentEvent::Error {
                     message: "boom".into(),

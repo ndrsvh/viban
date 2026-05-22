@@ -3,6 +3,7 @@
 use serde_json::Value;
 
 use super::AgentEvent;
+use crate::types::TokenUsage;
 
 /// Classifies one line of Claude Code stdout. Unrecognized shapes pass
 /// through as `AgentEvent::Raw`.
@@ -24,9 +25,26 @@ pub fn parse_line(line: &str) -> AgentEvent {
                 .get("is_error")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            usage: parse_usage(&value),
         },
         _ => AgentEvent::Raw { payload: value },
     }
+}
+
+/// Extracts token counts from a `result` event's `usage` object. Best-effort:
+/// returns `None` when there is no `usage`, and zeroes a missing field.
+fn parse_usage(value: &Value) -> Option<TokenUsage> {
+    let usage = value.get("usage")?;
+    Some(TokenUsage {
+        input_tokens: usage
+            .get("input_tokens")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        output_tokens: usage
+            .get("output_tokens")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+    })
 }
 
 fn parse_system(value: Value) -> AgentEvent {
@@ -111,7 +129,7 @@ mod tests {
     #[test]
     fn result_carries_error_flag() {
         match parse_line(r#"{"type":"result","subtype":"success","is_error":false}"#) {
-            AgentEvent::Result { is_error } => assert!(!is_error),
+            AgentEvent::Result { is_error, .. } => assert!(!is_error),
             other => panic!("expected Result, got {other:?}"),
         }
     }
@@ -176,7 +194,30 @@ mod tests {
     #[test]
     fn result_defaults_is_error_to_false_when_absent() {
         match parse_line(r#"{"type":"result"}"#) {
-            AgentEvent::Result { is_error } => assert!(!is_error),
+            AgentEvent::Result { is_error, .. } => assert!(!is_error),
+            other => panic!("expected Result, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn result_captures_token_usage() {
+        let line = r#"{"type":"result","is_error":false,
+            "usage":{"input_tokens":1200,"output_tokens":340}}"#;
+        match parse_line(line) {
+            AgentEvent::Result {
+                usage: Some(usage), ..
+            } => {
+                assert_eq!(usage.input_tokens, 1200);
+                assert_eq!(usage.output_tokens, 340);
+            }
+            other => panic!("expected Result with usage, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn result_without_usage_has_none() {
+        match parse_line(r#"{"type":"result","is_error":false}"#) {
+            AgentEvent::Result { usage, .. } => assert!(usage.is_none()),
             other => panic!("expected Result, got {other:?}"),
         }
     }
@@ -184,7 +225,7 @@ mod tests {
     #[test]
     fn result_reports_a_true_error_flag() {
         match parse_line(r#"{"type":"result","is_error":true}"#) {
-            AgentEvent::Result { is_error } => assert!(is_error),
+            AgentEvent::Result { is_error, .. } => assert!(is_error),
             other => panic!("expected Result, got {other:?}"),
         }
     }
