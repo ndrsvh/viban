@@ -107,3 +107,84 @@ pub async fn get_session(session_id: String, state: State<'_, AppState>) -> Resu
         .await
         .map_err(|err| err.to_string())
 }
+
+/// Returns the workspace's board with its columns and tasks.
+#[tauri::command]
+pub async fn get_board(state: State<'_, AppState>) -> Result<Value, String> {
+    let client = state.client().await.ok_or("server not connected")?;
+    client
+        .call("boards.get", Value::Null)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+/// Creates a task at the end of a column.
+#[tauri::command]
+pub async fn create_task(
+    column_id: String,
+    title: String,
+    description: String,
+    state: State<'_, AppState>,
+) -> Result<Value, String> {
+    let client = state.client().await.ok_or("server not connected")?;
+    client
+        .call(
+            "tasks.create",
+            json!({ "column_id": column_id, "title": title, "description": description }),
+        )
+        .await
+        .map_err(|err| err.to_string())
+}
+
+/// Updates a task — only the provided fields change.
+#[tauri::command]
+pub async fn update_task(
+    task_id: String,
+    title: Option<String>,
+    description: Option<String>,
+    session_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Value, String> {
+    let client = state.client().await.ok_or("server not connected")?;
+    client
+        .call(
+            "tasks.update",
+            json!({
+                "task_id": task_id,
+                "title": title,
+                "description": description,
+                "session_id": session_id,
+            }),
+        )
+        .await
+        .map_err(|err| err.to_string())
+}
+
+/// Deletes a task.
+#[tauri::command]
+pub async fn delete_task(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let client = state.client().await.ok_or("server not connected")?;
+    client
+        .call("tasks.delete", json!({ "task_id": task_id }))
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+/// Applies a column's full task ordering.
+#[tauri::command]
+pub async fn reorder_tasks(
+    column_id: String,
+    task_ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let client = state.client().await.ok_or("server not connected")?;
+    client
+        .call(
+            "tasks.reorder",
+            json!({ "column_id": column_id, "task_ids": task_ids }),
+        )
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}

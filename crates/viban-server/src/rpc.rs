@@ -16,7 +16,7 @@ use tokio::sync::{mpsc, Mutex};
 
 use viban_core::agents::{spawn_claude, ClaudeSession};
 use viban_core::db::Db;
-use viban_core::types::{Message, Session};
+use viban_core::types::{Message, Session, Task};
 use viban_core::{new_id, AgentEvent};
 
 /// Running agent sessions for one connection, keyed by viban session id.
@@ -124,6 +124,11 @@ async fn dispatch(
         "sessions.send_message" => sessions_send_message(params, ctx, registry, outbound).await,
         "sessions.list" => sessions_list(ctx).await,
         "sessions.get" => sessions_get(params, ctx).await,
+        "boards.get" => boards_get(ctx).await,
+        "tasks.create" => tasks_create(params, ctx).await,
+        "tasks.update" => tasks_update(params, ctx).await,
+        "tasks.delete" => tasks_delete(params, ctx).await,
+        "tasks.reorder" => tasks_reorder(params, ctx).await,
         other => Err(RpcError::method_not_found(other)),
     }
 }
@@ -254,6 +259,123 @@ async fn sessions_get(params: Value, ctx: &Context) -> Result<Value, RpcError> {
         .await
         .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
     Ok(json!({ "session": session, "messages": messages }))
+}
+
+/// Returns the workspace's board with its columns and tasks.
+async fn boards_get(ctx: &Context) -> Result<Value, RpcError> {
+    let board = ctx
+        .db
+        .get_board()
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+        .ok_or_else(|| RpcError::internal("no board exists"))?;
+    let columns = ctx
+        .db
+        .list_columns(board.id.clone())
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+    let tasks = ctx
+        .db
+        .list_tasks(board.id.clone())
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+    Ok(json!({ "board": board, "columns": columns, "tasks": tasks }))
+}
+
+/// Creates a task at the end of a column.
+async fn tasks_create(params: Value, ctx: &Context) -> Result<Value, RpcError> {
+    let column_id = str_param(&params, "column_id")?.to_string();
+    let title = str_param(&params, "title")?.to_string();
+    let description = params
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+
+    let board = ctx
+        .db
+        .get_board()
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+        .ok_or_else(|| RpcError::internal("no board exists"))?;
+    let position = ctx
+        .db
+        .list_tasks(board.id)
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+        .iter()
+        .filter(|task| task.column_id == column_id)
+        .count() as i64;
+
+    let task = Task {
+        id: new_id(),
+        column_id,
+        title,
+        description,
+        position,
+        session_id: None,
+        created_at: now_millis(),
+    };
+    ctx.db
+        .create_task(task.clone())
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+    Ok(json!({ "task": task }))
+}
+
+/// Updates a task's title, description, and/or linked session.
+async fn tasks_update(params: Value, ctx: &Context) -> Result<Value, RpcError> {
+    let task_id = str_param(&params, "task_id")?.to_string();
+    let mut task = ctx
+        .db
+        .get_task(task_id.clone())
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+        .ok_or_else(|| RpcError::invalid_params(format!("unknown task: {task_id}")))?;
+
+    if let Some(title) = params.get("title").and_then(Value::as_str) {
+        task.title = title.to_string();
+    }
+    if let Some(description) = params.get("description").and_then(Value::as_str) {
+        task.description = description.to_string();
+    }
+    if let Some(session_id) = params.get("session_id").and_then(Value::as_str) {
+        task.session_id = Some(session_id.to_string());
+    }
+
+    ctx.db
+        .update_task(task.clone())
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+    Ok(json!({ "task": task }))
+}
+
+/// Deletes a task.
+async fn tasks_delete(params: Value, ctx: &Context) -> Result<Value, RpcError> {
+    let task_id = str_param(&params, "task_id")?.to_string();
+    ctx.db
+        .delete_task(task_id)
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+    Ok(json!({ "ok": true }))
+}
+
+/// Applies a column's full task ordering (also re-parents moved tasks).
+async fn tasks_reorder(params: Value, ctx: &Context) -> Result<Value, RpcError> {
+    let column_id = str_param(&params, "column_id")?.to_string();
+    let task_ids = params
+        .get("task_ids")
+        .and_then(Value::as_array)
+        .ok_or_else(|| RpcError::invalid_params("missing or non-array 'task_ids'"))?
+        .iter()
+        .filter_map(Value::as_str)
+        .map(String::from)
+        .collect::<Vec<_>>();
+    ctx.db
+        .reorder_column(column_id, task_ids)
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+    Ok(json!({ "ok": true }))
 }
 
 /// Forwards every agent event as an `events.update` notification, persists the

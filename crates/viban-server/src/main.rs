@@ -47,6 +47,9 @@ async fn main() -> Result<()> {
     let db = viban_core::db::Db::open(&db_dir.join("viban.db"))
         .await
         .context("failed to open the database")?;
+    db.ensure_default_board(&args.workspace.to_string_lossy())
+        .await
+        .context("failed to ensure the default board")?;
 
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", args.port))
         .await

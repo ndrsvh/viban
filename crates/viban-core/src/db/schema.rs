@@ -23,6 +23,36 @@ CREATE TABLE messages (
 CREATE INDEX idx_messages_session ON messages (session_id, created_at);
 ";
 
+/// Migration 2 — the Kanban board: boards, columns, and tasks.
+pub const MIGRATION_2: &str = "
+CREATE TABLE boards (
+    id           TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,
+    project_path TEXT NOT NULL,
+    created_at   INTEGER NOT NULL
+);
+
+CREATE TABLE columns (
+    id       TEXT PRIMARY KEY,
+    board_id TEXT NOT NULL REFERENCES boards(id),
+    name     TEXT NOT NULL,
+    position INTEGER NOT NULL
+);
+
+CREATE TABLE tasks (
+    id          TEXT PRIMARY KEY,
+    column_id   TEXT NOT NULL REFERENCES columns(id),
+    title       TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    position    INTEGER NOT NULL,
+    session_id  TEXT,
+    created_at  INTEGER NOT NULL
+);
+
+CREATE INDEX idx_columns_board ON columns (board_id, position);
+CREATE INDEX idx_tasks_column ON tasks (column_id, position);
+";
+
 /// Every migration, in application order. A migration's version is its
 /// 1-based index in this list.
-pub const MIGRATIONS: &[&str] = &[MIGRATION_1];
+pub const MIGRATIONS: &[&str] = &[MIGRATION_1, MIGRATION_2];
