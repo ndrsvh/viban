@@ -16,9 +16,10 @@ pub async fn current_project(state: State<'_, AppState>) -> Result<Option<String
     Ok(state.project.lock().await.clone())
 }
 
-/// Opens a native folder dialog, verifies the chosen folder is a git
-/// repository, persists it as the project, and restarts the sidecar against
-/// it. Returns the chosen path, or `None` if the user cancelled.
+/// Opens a native folder dialog, persists the chosen folder as the project,
+/// and restarts the sidecar against it. Any folder is accepted — git is
+/// initialized later, on demand, when a task first needs a worktree. Returns
+/// the chosen path, or `None` if the user cancelled.
 #[tauri::command]
 pub async fn open_project(
     app: AppHandle,
@@ -37,9 +38,6 @@ pub async fn open_project(
     let path = folder
         .into_path()
         .map_err(|err| format!("invalid folder path: {err}"))?;
-    if !path.join(".git").exists() {
-        return Err("the selected folder is not a git repository".to_string());
-    }
 
     let path_str = path.to_string_lossy().into_owned();
     crate::project::save(&app, &path_str).map_err(|err| err.to_string())?;
@@ -130,20 +128,24 @@ pub async fn send_message(
     Ok(())
 }
 
-/// Creates a git worktree + branch for a task and links a fresh session to
-/// it, returning the new session id (`tasks.start_session`).
+/// Creates a git worktree + branch for a task and links a fresh session to it
+/// (`tasks.start_session`). Returns `{ session_id }` on success, or
+/// `{ needs_git_init: true }` when the project folder must first be made a git
+/// repository — pass `init_git: true` to confirm and retry.
 #[tauri::command]
-pub async fn start_session(task_id: String, state: State<'_, AppState>) -> Result<String, String> {
+pub async fn start_session(
+    task_id: String,
+    init_git: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<Value, String> {
     let client = state.client().await.ok_or("server not connected")?;
-    let result = client
-        .call("tasks.start_session", json!({ "task_id": task_id }))
+    client
+        .call(
+            "tasks.start_session",
+            json!({ "task_id": task_id, "init_git": init_git.unwrap_or(false) }),
+        )
         .await
-        .map_err(|err| err.to_string())?;
-    result
-        .get("session_id")
-        .and_then(Value::as_str)
-        .map(String::from)
-        .ok_or_else(|| "server did not return a session id".to_string())
+        .map_err(|err| err.to_string())
 }
 
 /// Lists every persisted session (`{ "sessions": [...] }`).
