@@ -170,4 +170,38 @@ describe("App", () => {
       (await screen.findAllByLabelText("Agent running")).length,
     ).toBeGreaterThan(0);
   });
+
+  it("opens the command palette with Ctrl-K", async () => {
+    const user = userEvent.setup();
+    setInvoke((command) => {
+      if (command === "current_project") {
+        return Promise.resolve("/home/me/myproject");
+      }
+      if (command === "server_health") {
+        return Promise.resolve({
+          status: "ok",
+          version: "0.1.0",
+          workspace: "/home/me/myproject",
+        });
+      }
+      if (command === "get_board") {
+        return Promise.resolve({
+          columns: [
+            { id: "c1", board_id: "b1", name: "Backlog", position: 0 },
+          ],
+          tasks: [],
+          statuses: {},
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    render(<App />);
+    await screen.findByText("Backlog");
+
+    await user.keyboard("{Control>}k{/Control}");
+    expect(
+      await screen.findByPlaceholderText(/Search tasks/),
+    ).toBeInTheDocument();
+  });
 });

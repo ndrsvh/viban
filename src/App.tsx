@@ -3,6 +3,7 @@ import { Channel } from "@tauri-apps/api/core";
 
 import { AppShell, type ServerStatus } from "@/components/app-shell";
 import { BoardView } from "@/components/board-view";
+import { CommandPalette } from "@/components/command-palette";
 import { Inspector } from "@/components/inspector";
 import { TaskDetail } from "@/components/task-detail";
 import { TaskListPanel } from "@/components/task-list-panel";
@@ -22,6 +23,7 @@ export default function App() {
   const [activeSession, setActiveSession] = useState<string | null>(null);
   const [reviewTask, setReviewTask] = useState<Task | null>(null);
   const [projectError, setProjectError] = useState<string | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   // The task whose session is open in the chat, resolved from the board store.
   const taskForSession = useBoardStore((state) =>
@@ -93,6 +95,19 @@ export default function App() {
       void rpc.unwatchTaskStatus();
     };
   }, [status]);
+
+  // Cmd/Ctrl-K toggles the command palette, app-wide, once a project is open.
+  useEffect(() => {
+    if (!project) return;
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen((current) => !current);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [project]);
 
   const handleOpenProject = useCallback(async () => {
     setProjectError(null);
@@ -185,29 +200,41 @@ export default function App() {
   }
 
   return (
-    <AppShell
-      serverStatus={status}
-      project={project}
-      onSwitchProject={() => void handleOpenProject()}
-      onGoBoard={goBoard}
-      boardActive={!detailTask}
-      taskList={
-        <TaskListPanel
-          activeSessionId={activeSession}
-          reviewTaskId={reviewTask?.id ?? null}
-          onOpenSession={openSession}
-        />
-      }
-      inspector={detailTask ? <Inspector task={detailTask} /> : null}
-    >
-      <div className="flex h-full flex-col">
-        {projectError && (
-          <p className="border-b bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
-            {projectError}
-          </p>
-        )}
-        <div className="flex-1 overflow-hidden">{workArea}</div>
-      </div>
-    </AppShell>
+    <>
+      <AppShell
+        serverStatus={status}
+        project={project}
+        onSwitchProject={() => void handleOpenProject()}
+        onGoBoard={goBoard}
+        boardActive={!detailTask}
+        taskList={
+          <TaskListPanel
+            activeSessionId={activeSession}
+            reviewTaskId={reviewTask?.id ?? null}
+            onOpenSession={openSession}
+          />
+        }
+        inspector={detailTask ? <Inspector task={detailTask} /> : null}
+      >
+        <div className="flex h-full flex-col">
+          {projectError && (
+            <p className="border-b bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
+              {projectError}
+            </p>
+          )}
+          <div className="flex-1 overflow-hidden">{workArea}</div>
+        </div>
+      </AppShell>
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        onSelectTask={(task) => {
+          if (task.session_id) openSession(task.session_id);
+          else goBoard();
+        }}
+        onGoBoard={goBoard}
+        onSwitchProject={() => void handleOpenProject()}
+      />
+    </>
   );
 }
