@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { Channel, invoke } from "@tauri-apps/api/core";
+import { Channel } from "@tauri-apps/api/core";
 
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
+import { rpc } from "@/lib/rpc";
 import { cn } from "@/lib/utils";
 import type { AgentEvent } from "@/types/agent";
-import type { Message } from "@/types/session";
 
 type Role = "user" | "assistant" | "tool" | "error";
 
@@ -83,8 +83,9 @@ export function ChatView({ sessionId, onSpawned }: ChatViewProps) {
       }
     };
 
-    void invoke("open_session", { sessionId, onEvent: channel });
-    invoke<{ messages: Message[] }>("get_session", { sessionId })
+    void rpc.openSession(sessionId, channel);
+    rpc
+      .getSession(sessionId)
       .then((history) => {
         if (cancelled) return;
         startedRef.current = true;
@@ -103,7 +104,7 @@ export function ChatView({ sessionId, onSpawned }: ChatViewProps) {
 
     return () => {
       cancelled = true;
-      void invoke("close_session", { sessionId });
+      void rpc.closeSession(sessionId);
     };
   }, [sessionId]);
 
@@ -115,9 +116,9 @@ export function ChatView({ sessionId, onSpawned }: ChatViewProps) {
     setBusy(true);
     try {
       if (startedRef.current) {
-        await invoke("send_message", { sessionId, prompt });
+        await rpc.sendMessage(sessionId, prompt);
       } else {
-        await invoke("spawn_session", { sessionId, prompt });
+        await rpc.spawnSession(sessionId, prompt);
         startedRef.current = true;
         onSpawned();
       }

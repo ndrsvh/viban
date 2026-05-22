@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 
 import { BoardView } from "@/components/board-view";
 import { ChatView } from "@/components/chat-view";
 import { DiffView } from "@/components/diff-view";
 import { Button } from "@/components/ui/button";
+import { rpc } from "@/lib/rpc";
 import type { Task } from "@/types/board";
-import type { ServerHealth } from "@/types/server";
 
 type Status = "connecting" | "ready" | "reconnecting";
 
@@ -28,7 +27,8 @@ export default function App() {
   const [projectError, setProjectError] = useState<string | null>(null);
 
   useEffect(() => {
-    void invoke<string | null>("current_project")
+    void rpc
+      .currentProject()
       .then((path) => setProject(path))
       .catch(() => setProject(null));
   }, []);
@@ -43,7 +43,7 @@ export default function App() {
 
     const poll = async () => {
       try {
-        await invoke<ServerHealth>("server_health");
+        await rpc.serverHealth();
         if (cancelled) return;
         failures = 0;
         everConnected = true;
@@ -68,7 +68,7 @@ export default function App() {
   const handleOpenProject = useCallback(async () => {
     setProjectError(null);
     try {
-      const path = await invoke<string | null>("open_project");
+      const path = await rpc.openProject();
       if (path) {
         setActiveSession(null);
         setReviewTask(null);

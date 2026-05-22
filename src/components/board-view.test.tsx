@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
 
 import { BoardView } from "@/components/board-view";
+import { useBoardStore } from "@/stores/useBoardStore";
 import type { Column, Task } from "@/types/board";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -53,6 +54,8 @@ function boardWith(tasks: Task[], extra: InvokeImpl = () => Promise.resolve()) {
 
 beforeEach(() => {
   invokeMock.mockReset();
+  // The board store is a module singleton — clear it so tests don't leak.
+  useBoardStore.setState({ columns: [], columnTasks: {}, tasks: {} });
 });
 
 describe("BoardView", () => {

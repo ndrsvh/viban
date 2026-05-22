@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { MergeView } from "@codemirror/merge";
 import { EditorState } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 
 import { Button } from "@/components/ui/button";
+import { rpc } from "@/lib/rpc";
 import { cn } from "@/lib/utils";
 import type { Attempt, Task } from "@/types/board";
 import type { FileDiff, FileStatus } from "@/types/diff";
@@ -46,9 +46,7 @@ export function DiffView({ task, onDone }: DiffViewProps) {
   const loadDiff = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await invoke<{ files: FileDiff[] }>("git_diff", {
-        taskId: task.id,
-      });
+      const result = await rpc.gitDiff(task.id);
       setFiles(result.files);
       setSelected(0);
     } catch (err) {
@@ -60,7 +58,8 @@ export function DiffView({ task, onDone }: DiffViewProps) {
 
   useEffect(() => {
     void loadDiff();
-    invoke<{ attempts: Attempt[] }>("list_attempts", { taskId: task.id })
+    rpc
+      .listAttempts(task.id)
       .then((result) => setAttempts(result.attempts))
       .catch(() => setAttempts([]));
   }, [loadDiff, task.id]);
@@ -69,7 +68,7 @@ export function DiffView({ task, onDone }: DiffViewProps) {
     const attempt = attempts.find((entry) => entry.id === attemptId);
     if (!attempt) return;
     try {
-      await invoke("activate_attempt", { attemptId });
+      await rpc.activateAttempt(attemptId);
       setActiveSession(attempt.session_id);
       await loadDiff();
     } catch (err) {
@@ -81,7 +80,7 @@ export function DiffView({ task, onDone }: DiffViewProps) {
     if (busy) return;
     setBusy(true);
     try {
-      await invoke("git_commit", { taskId: task.id });
+      await rpc.gitCommit(task.id);
       onDone();
     } catch (err) {
       setError(String(err));
@@ -93,7 +92,7 @@ export function DiffView({ task, onDone }: DiffViewProps) {
     if (busy) return;
     setBusy(true);
     try {
-      await invoke("git_restore", { taskId: task.id });
+      await rpc.gitRestore(task.id);
       onDone();
     } catch (err) {
       setError(String(err));

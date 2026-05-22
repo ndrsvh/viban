@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import {
   closestCorners,
@@ -8,7 +7,6 @@ import {
   KeyboardSensor,
   PointerSensor,
   pointerWithin,
-  useDroppable,
   useSensor,
   useSensors,
   type CollisionDetection,
@@ -16,25 +14,15 @@ import {
   type DragOverEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
+import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 
+import { BoardColumn } from "@/components/board-column";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { GitInitDialog } from "@/components/git-init-dialog";
-import { TaskCard } from "@/components/task-card";
 import { TaskDialog } from "@/components/task-dialog";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
-import type { Column, Task } from "@/types/board";
-
-/** Result of the `start_session` command. */
-interface StartSessionResult {
-  session_id?: string;
-  needs_git_init?: boolean;
-}
+import { rpc } from "@/lib/rpc";
+import { useBoardStore } from "@/stores/useBoardStore";
+import type { Task } from "@/types/board";
 
 interface BoardViewProps {
   onOpenSession: (sessionId: string) => void;
@@ -49,11 +37,15 @@ const boardCollision: CollisionDetection = (args) => {
   return byPointer.length > 0 ? byPointer : closestCorners(args);
 };
 
-/** The Kanban board: columns of draggable task cards. */
+/** The Kanban board: columns of draggable task cards. Board data lives in
+ *  `useBoardStore`; this component owns only the transient UI state. */
 export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
-  const [columns, setColumns] = useState<Column[]>([]);
-  const [columnTasks, setColumnTasks] = useState<Record<string, string[]>>({});
-  const [tasks, setTasks] = useState<Record<string, Task>>({});
+  const columns = useBoardStore((state) => state.columns);
+  const columnTasks = useBoardStore((state) => state.columnTasks);
+  const tasks = useBoardStore((state) => state.tasks);
+  const loadBoard = useBoardStore((state) => state.loadBoard);
+  const setColumnTasks = useBoardStore((state) => state.setColumnTasks);
+
   const [activeId, setActiveId] = useState<string | null>(null);
   const [hoverColumn, setHoverColumn] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -73,26 +65,6 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
-
-  const loadBoard = useCallback(async () => {
-    try {
-      const result = await invoke<{ columns: Column[]; tasks: Task[] }>(
-        "get_board",
-      );
-      const taskMap: Record<string, Task> = {};
-      const grouped: Record<string, string[]> = {};
-      for (const column of result.columns) grouped[column.id] = [];
-      for (const task of result.tasks) {
-        taskMap[task.id] = task;
-        (grouped[task.column_id] ??= []).push(task.id);
-      }
-      setColumns(result.columns);
-      setTasks(taskMap);
-      setColumnTasks(grouped);
-    } catch (err) {
-      console.error(err);
-    }
-  }, []);
 
   useEffect(() => {
     void loadBoard();
@@ -138,7 +110,7 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
     setColumnTasks(next);
 
     for (const columnId of new Set([from, to])) {
-      void invoke("reorder_tasks", { columnId, taskIds: next[columnId] });
+      void rpc.reorderTasks(columnId, next[columnId]);
     }
   }
 
@@ -151,11 +123,7 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
       // The server links a session to the task. By default that means an
       // isolated git worktree; if the project folder is not a git repo it
       // asks how to proceed first (init git, or work without git).
-      const result = await invoke<StartSessionResult>("start_session", {
-        taskId: task.id,
-        initGit: options.initGit ?? false,
-        withoutGit: options.withoutGit ?? false,
-      });
+      const result = await rpc.startSession(task.id, options);
       if (result.needs_git_init) {
         setGitInitTask(task);
         return;
@@ -191,9 +159,7 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
   async function handleNewAttempt(task: Task) {
     setActionError(null);
     try {
-      const result = await invoke<StartSessionResult>("create_attempt", {
-        taskId: task.id,
-      });
+      const result = await rpc.createAttempt(task.id);
       if (result.session_id) {
         await loadBoard();
         onOpenSession(result.session_id);
@@ -210,7 +176,7 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
     setActionError(null);
     setMergeBusy(true);
     try {
-      await invoke("git_merge", { taskId: task.id });
+      await rpc.gitMerge(task.id);
       await loadBoard();
     } catch (err) {
       console.error(err);
@@ -327,85 +293,6 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
           if (!open && !mergeBusy) setMergeTask(null);
         }}
       />
-    </div>
-  );
-}
-
-interface BoardColumnProps {
-  column: Column;
-  taskIds: string[];
-  tasks: Record<string, Task>;
-  /** True while a dragged card's drop target is this column. */
-  isTarget: boolean;
-  onOpenSession: (sessionId: string) => void;
-  onStartSession: (task: Task) => void;
-  onReview: (task: Task) => void;
-  onMerge: (task: Task) => void;
-  onNewAttempt: (task: Task) => void;
-  onEdit: (task: Task) => void;
-  onAddTask: (columnId: string) => void;
-}
-
-function BoardColumn({
-  column,
-  taskIds,
-  tasks,
-  isTarget,
-  onOpenSession,
-  onStartSession,
-  onReview,
-  onMerge,
-  onNewAttempt,
-  onEdit,
-  onAddTask,
-}: BoardColumnProps) {
-  const { setNodeRef } = useDroppable({ id: column.id });
-  return (
-    <div
-      className={cn(
-        "flex w-72 shrink-0 flex-col rounded-md bg-muted/40 ring-2 transition-colors",
-        isTarget ? "ring-primary" : "ring-transparent",
-      )}
-    >
-      <div className="flex items-center justify-between px-3 py-2">
-        <h2 className="text-sm font-medium">{column.name}</h2>
-        <span className="text-xs text-muted-foreground">{taskIds.length}</span>
-      </div>
-      <div
-        ref={setNodeRef}
-        className="flex flex-1 flex-col gap-2 overflow-y-auto p-2"
-      >
-        <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
-          {taskIds.map((id) => {
-            const task = tasks[id];
-            return task ? (
-              <TaskCard
-                key={id}
-                task={task}
-                onOpenSession={onOpenSession}
-                onStartSession={onStartSession}
-                onReview={onReview}
-                onMerge={onMerge}
-                onNewAttempt={onNewAttempt}
-                onEdit={onEdit}
-              />
-            ) : null;
-          })}
-        </SortableContext>
-        {taskIds.length === 0 && (
-          <div className="rounded-md border border-dashed py-6 text-center text-xs text-muted-foreground">
-            Drop tasks here
-          </div>
-        )}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="justify-start text-muted-foreground"
-          onClick={() => onAddTask(column.id)}
-        >
-          + Add task
-        </Button>
-      </div>
     </div>
   );
 }

@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +11,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { rpc } from "@/lib/rpc";
+import { toast } from "@/stores/useToastStore";
 import type { Task } from "@/types/board";
 
 interface TaskDialogProps {
@@ -49,14 +50,14 @@ export function TaskDialog({
     setBusy(true);
     try {
       if (task) {
-        await invoke("update_task", { taskId: task.id, title, description });
+        await rpc.updateTask({ taskId: task.id, title, description });
       } else if (columnId) {
-        await invoke("create_task", { columnId, title, description });
+        await rpc.createTask(columnId, title, description);
       }
       onChanged();
       onOpenChange(false);
     } catch (err) {
-      console.error(err);
+      toast.error(`Could not save the task: ${String(err)}`);
     } finally {
       setBusy(false);
     }
@@ -66,11 +67,11 @@ export function TaskDialog({
     if (!task || busy) return;
     setBusy(true);
     try {
-      await invoke("delete_task", { taskId: task.id });
+      await rpc.deleteTask(task.id);
       onChanged();
       onOpenChange(false);
     } catch (err) {
-      console.error(err);
+      toast.error(`Could not delete the task: ${String(err)}`);
     } finally {
       setBusy(false);
     }
