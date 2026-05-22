@@ -9,8 +9,8 @@ use viban_core::{git, new_id};
 
 use super::{now_millis, str_param, Context, RpcError};
 
-/// Returns the workspace's board with its columns and tasks. Serves
-/// `boards.get`.
+/// Returns the workspace's board with its columns, tasks, and the live agent
+/// status of each task. Serves `boards.get`.
 pub(super) async fn get_board(ctx: &Context) -> Result<Value, RpcError> {
     let board = ctx
         .db
@@ -19,7 +19,13 @@ pub(super) async fn get_board(ctx: &Context) -> Result<Value, RpcError> {
         .ok_or_else(|| RpcError::internal("no board exists"))?;
     let columns = ctx.db.list_columns(board.id.clone()).await?;
     let tasks = ctx.db.list_tasks(board.id.clone()).await?;
-    Ok(json!({ "board": board, "columns": columns, "tasks": tasks }))
+    let statuses = ctx.statuses.lock().await.clone();
+    Ok(json!({
+        "board": board,
+        "columns": columns,
+        "tasks": tasks,
+        "statuses": statuses,
+    }))
 }
 
 /// Creates a task at the end of a column.
@@ -141,6 +147,20 @@ mod tests {
             !board["columns"].as_array().expect("columns").is_empty(),
             "the default board has columns"
         );
+    }
+
+    #[tokio::test]
+    async fn get_board_reports_live_task_statuses() {
+        use viban_core::types::AgentStatus;
+        let (ctx, _ws, _data) = context().await;
+        let task_id = task(&ctx, "Running task").await;
+        ctx.statuses
+            .lock()
+            .await
+            .insert(task_id.clone(), AgentStatus::Running);
+
+        let board = super::get_board(&ctx).await.expect("get_board");
+        assert_eq!(board["statuses"][&task_id], "running");
     }
 
     #[tokio::test]
