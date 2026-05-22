@@ -330,8 +330,13 @@ Do these in order. Do not jump ahead. Each phase ends in a working, committable 
 
 **Goal**: each task runs its agent in an isolated worktree so parallel sessions don't collide.
 
-- [ ] On board creation: user picks a git repo as the project root
+- [ ] On board creation: user picks **any** folder as the project root. It need
+  not be a git repository — viban initializes git on demand (`git init` + an
+  initial commit, after a confirmation dialog) the first time a task needs a
+  worktree.
 - [ ] On "start session" for a task:
+  - if the project folder is not yet a git repo with a commit, ask the user to
+    confirm initializing it
   - run `git worktree add .viban/worktrees/<task-id> -b viban/<task-slug>`
   - spawn `claude` with `current_dir` = worktree path
 - [ ] On task moved to Done: optional "merge & cleanup" — merge branch into base, then `git worktree remove`
