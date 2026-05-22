@@ -7,7 +7,7 @@ mod common;
 
 use serde_json::{json, Value};
 
-use common::{git_output, worktree_path, TestServer};
+use common::{git_output, TestServer};
 
 #[tokio::test]
 async fn worktree_lifecycle() {
@@ -35,7 +35,7 @@ async fn worktree_lifecycle() {
         .to_string();
 
     // The worktree directory exists on disk.
-    let worktree = worktree_path(server.workspace(), &task_id);
+    let worktree = server.task_worktree(&task_id).await;
     assert!(worktree.is_dir(), "worktree directory was created");
 
     // The task now carries a slugified branch name.
@@ -56,9 +56,13 @@ async fn worktree_lifecycle() {
     );
 
     // git itself knows about the worktree and the branch.
+    let worktree_name = worktree
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("worktree directory name");
     let worktrees = git_output(server.workspace(), &["worktree", "list"]);
     assert!(
-        worktrees.contains(task_id.as_str()),
+        worktrees.contains(worktree_name),
         "git lists the new worktree:\n{worktrees}"
     );
     let branches = git_output(server.workspace(), &["branch", "--list", &branch]);

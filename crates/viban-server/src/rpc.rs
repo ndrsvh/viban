@@ -16,7 +16,7 @@ use tokio::sync::{mpsc, Mutex};
 
 use viban_core::agents::{spawn_claude, ClaudeSession};
 use viban_core::db::Db;
-use viban_core::types::{Message, Session, Task};
+use viban_core::types::{Attempt, Message, Session, Task};
 use viban_core::{git, new_id, AgentEvent};
 
 /// Running agent sessions for one connection, keyed by viban session id.
@@ -130,6 +130,9 @@ async fn dispatch(
         "tasks.delete" => tasks_delete(params, ctx, registry).await,
         "tasks.reorder" => tasks_reorder(params, ctx).await,
         "tasks.start_session" => tasks_start_session(params, ctx).await,
+        "attempts.create" => attempts_create(params, ctx).await,
+        "attempts.list" => attempts_list(params, ctx).await,
+        "attempts.activate" => attempts_activate(params, ctx).await,
         "git.diff" => git_diff(params, ctx).await,
         "git.commit" => git_commit(params, ctx).await,
         "git.restore" => git_restore(params, ctx).await,
@@ -367,24 +370,24 @@ async fn tasks_delete(
 ) -> Result<Value, RpcError> {
     let task_id = str_param(&params, "task_id")?.to_string();
 
-    let task = ctx
+    // Tear down every attempt's worktree, branch, and live agent.
+    let attempts = ctx
         .db
-        .get_task(task_id.clone())
+        .list_attempts(task_id.clone())
         .await
         .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
-
-    if let Some(task) = task {
-        if let Some(session_id) = &task.session_id {
+    for attempt in &attempts {
+        if let Some(session_id) = &attempt.session_id {
             registry.lock().await.remove(session_id);
         }
-        if let Some(worktree_path) = &task.worktree_path {
+        if let Some(worktree_path) = &attempt.worktree_path {
             if let Err(err) =
                 git::worktree_remove(&ctx.workspace, Path::new(worktree_path), true).await
             {
                 tracing::warn!(%err, "failed to remove worktree");
             }
         }
-        if let Some(branch) = &task.branch {
+        if let Some(branch) = &attempt.branch {
             if let Err(err) = git::branch_delete(&ctx.workspace, branch).await {
                 tracing::warn!(%err, "failed to delete branch");
             }
@@ -433,13 +436,23 @@ async fn tasks_start_session(params: Value, ctx: &Context) -> Result<Value, RpcE
             .map_err(|err| RpcError::internal(format!("failed to initialize git: {err}")))?;
     }
 
-    let id_fragment: String = task_id.chars().take(8).collect();
+    let session_id = create_task_attempt(ctx, &mut task).await?;
+    Ok(json!({ "session_id": session_id }))
+}
+
+/// Creates a new attempt for `task`: a git worktree + branch + session, an
+/// `attempts` row, and repoints the task's active fields at it. The project
+/// folder must already be a git repository with a commit.
+async fn create_task_attempt(ctx: &Context, task: &mut Task) -> Result<String, RpcError> {
+    let attempt_id = new_id();
+    let session_id = new_id();
+    let id_fragment: String = attempt_id.chars().take(8).collect();
     let branch = format!("viban/{}-{}", git::slugify(&task.title), id_fragment);
     let worktree_path = ctx
         .workspace
         .join(".viban")
         .join("worktrees")
-        .join(&task_id);
+        .join(&attempt_id);
 
     if let Some(parent) = worktree_path.parent() {
         tokio::fs::create_dir_all(parent)
@@ -450,28 +463,108 @@ async fn tasks_start_session(params: Value, ctx: &Context) -> Result<Value, RpcE
         .await
         .map_err(|err| RpcError::internal(format!("failed to create worktree: {err}")))?;
 
-    let session_id = new_id();
+    let worktree_str = worktree_path.display().to_string();
+    ctx.db
+        .create_attempt(Attempt {
+            id: attempt_id,
+            task_id: task.id.clone(),
+            session_id: Some(session_id.clone()),
+            worktree_path: Some(worktree_str.clone()),
+            branch: Some(branch.clone()),
+            created_at: now_millis(),
+        })
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+
     task.session_id = Some(session_id.clone());
-    task.worktree_path = Some(worktree_path.display().to_string());
+    task.worktree_path = Some(worktree_str);
     task.branch = Some(branch);
+    ctx.db
+        .update_task(task.clone())
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+
+    Ok(session_id)
+}
+
+/// Starts an additional attempt for a task — a fresh worktree, branch, and
+/// session — leaving earlier attempts intact. Like `tasks.start_session` it
+/// returns `{ needs_git_init: true }` if the project is not a git repo yet.
+async fn attempts_create(params: Value, ctx: &Context) -> Result<Value, RpcError> {
+    let task_id = str_param(&params, "task_id")?.to_string();
+    let init_git = params
+        .get("init_git")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let mut task = ctx
+        .db
+        .get_task(task_id.clone())
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+        .ok_or_else(|| RpcError::invalid_params(format!("unknown task: {task_id}")))?;
+
+    let repo_ready = git::is_git_repo(&ctx.workspace).await && git::has_head(&ctx.workspace).await;
+    if !repo_ready {
+        if !init_git {
+            return Ok(json!({ "needs_git_init": true }));
+        }
+        git::prepare_repo(&ctx.workspace)
+            .await
+            .map_err(|err| RpcError::internal(format!("failed to initialize git: {err}")))?;
+    }
+
+    let session_id = create_task_attempt(ctx, &mut task).await?;
+    Ok(json!({ "session_id": session_id }))
+}
+
+/// Lists a task's attempts, newest first.
+async fn attempts_list(params: Value, ctx: &Context) -> Result<Value, RpcError> {
+    let task_id = str_param(&params, "task_id")?.to_string();
+    let attempts = ctx
+        .db
+        .list_attempts(task_id)
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
+    Ok(json!({ "attempts": attempts }))
+}
+
+/// Makes an existing attempt the task's active one, repointing the task's
+/// session, worktree, and branch at it.
+async fn attempts_activate(params: Value, ctx: &Context) -> Result<Value, RpcError> {
+    let attempt_id = str_param(&params, "attempt_id")?.to_string();
+    let attempt = ctx
+        .db
+        .get_attempt(attempt_id.clone())
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+        .ok_or_else(|| RpcError::invalid_params(format!("unknown attempt: {attempt_id}")))?;
+    let mut task = ctx
+        .db
+        .get_task(attempt.task_id.clone())
+        .await
+        .map_err(|err| RpcError::internal(format!("db error: {err}")))?
+        .ok_or_else(|| RpcError::internal("attempt references an unknown task"))?;
+
+    task.session_id = attempt.session_id;
+    task.worktree_path = attempt.worktree_path;
+    task.branch = attempt.branch;
     ctx.db
         .update_task(task)
         .await
         .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
-
-    Ok(json!({ "session_id": session_id }))
+    Ok(json!({ "ok": true }))
 }
 
-/// Resolves the working directory for a session's agent: the linked task's
-/// worktree path if it has one, otherwise the shared workspace.
+/// Resolves the working directory for a session's agent: the worktree of the
+/// attempt that session belongs to, otherwise the shared workspace.
 async fn agent_workdir(ctx: &Context, session_id: &str) -> Result<PathBuf, RpcError> {
-    let task = ctx
+    let attempt = ctx
         .db
-        .get_task_by_session(session_id.to_string())
+        .get_attempt_by_session(session_id.to_string())
         .await
         .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
-    Ok(task
-        .and_then(|task| task.worktree_path)
+    Ok(attempt
+        .and_then(|attempt| attempt.worktree_path)
         .map(PathBuf::from)
         .unwrap_or_else(|| ctx.workspace.clone()))
 }

@@ -157,6 +157,28 @@ impl TestServer {
             .expect("a column id")
             .to_string()
     }
+
+    /// A task's current JSON object, read from the board.
+    pub async fn task(&mut self, task_id: &str) -> Value {
+        let board = self.call("boards.get", Value::Null).await;
+        board["tasks"]
+            .as_array()
+            .expect("tasks")
+            .iter()
+            .find(|task| task["id"].as_str() == Some(task_id))
+            .cloned()
+            .unwrap_or_else(|| panic!("no task {task_id}"))
+    }
+
+    /// The worktree path of a task's active attempt.
+    pub async fn task_worktree(&mut self, task_id: &str) -> PathBuf {
+        let task = self.task(task_id).await;
+        PathBuf::from(
+            task["worktree_path"]
+                .as_str()
+                .expect("the task has a worktree"),
+        )
+    }
 }
 
 /// Runs `git args` in `dir`, panicking on failure.
@@ -190,9 +212,4 @@ pub fn init_git_repo(dir: &Path) {
     std::fs::write(dir.join("README.md"), "viban test repo\n").expect("write README");
     run_git(dir, &["add", "."]);
     run_git(dir, &["commit", "-m", "initial"]);
-}
-
-/// The on-disk worktree path the server uses for `task_id`.
-pub fn worktree_path(root: &Path, task_id: &str) -> PathBuf {
-    root.join(".viban").join("worktrees").join(task_id)
 }

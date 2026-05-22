@@ -195,11 +195,14 @@ impl Db {
         Ok(())
     }
 
-    /// Deletes a task.
+    /// Deletes a task and all of its attempts.
     pub async fn delete_task(&self, task_id: String) -> Result<()> {
         self.conn
             .call(move |conn| -> rusqlite::Result<()> {
-                conn.execute("DELETE FROM tasks WHERE id = ?1", params![task_id])?;
+                let tx = conn.transaction()?;
+                tx.execute("DELETE FROM attempts WHERE task_id = ?1", params![task_id])?;
+                tx.execute("DELETE FROM tasks WHERE id = ?1", params![task_id])?;
+                tx.commit()?;
                 Ok(())
             })
             .await
@@ -282,6 +285,22 @@ impl Db {
             })
             .await
             .context("failed to get attempt")
+    }
+
+    /// Fetches the attempt a given session belongs to, if any.
+    pub async fn get_attempt_by_session(&self, session_id: String) -> Result<Option<Attempt>> {
+        self.conn
+            .call(move |conn| -> rusqlite::Result<Option<Attempt>> {
+                conn.query_row(
+                    "SELECT id, task_id, session_id, worktree_path, branch, created_at \
+                     FROM attempts WHERE session_id = ?1",
+                    params![session_id],
+                    row_to_attempt,
+                )
+                .optional()
+            })
+            .await
+            .context("failed to get attempt by session")
     }
 }
 
