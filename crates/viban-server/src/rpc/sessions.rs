@@ -226,7 +226,26 @@ fn make_title(prompt: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::make_title;
+    use crate::rpc::test_support::context;
+
+    #[tokio::test]
+    async fn list_is_empty_for_a_fresh_database() {
+        let (ctx, _ws, _data) = context().await;
+        let result = super::list(&ctx).await.expect("list");
+        assert_eq!(result["sessions"].as_array().expect("sessions").len(), 0);
+    }
+
+    #[tokio::test]
+    async fn get_rejects_an_unknown_session() {
+        let (ctx, _ws, _data) = context().await;
+        let err = super::get(json!({ "session_id": "ghost" }), &ctx)
+            .await
+            .expect_err("unknown session errors");
+        assert_eq!(err.code, -32602);
+    }
 
     #[test]
     fn make_title_keeps_a_short_prompt_verbatim() {

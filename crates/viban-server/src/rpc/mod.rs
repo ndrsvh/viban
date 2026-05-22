@@ -185,6 +185,50 @@ fn serialize(response: Response) -> String {
 }
 
 #[cfg(test)]
+mod test_support {
+    //! Shared fixtures for the handler unit tests in each submodule.
+
+    use serde_json::json;
+    use tempfile::TempDir;
+    use viban_core::db::Db;
+
+    use super::{tasks, Context};
+
+    /// An in-memory `Context` with the default board. The returned `TempDir`s
+    /// back `workspace` / `data_dir` and must be kept alive for the test.
+    pub(super) async fn context() -> (Context, TempDir, TempDir) {
+        let workspace = tempfile::tempdir().expect("workspace tempdir");
+        let data_dir = tempfile::tempdir().expect("data tempdir");
+        let db = Db::open_in_memory().await.expect("in-memory db");
+        db.ensure_default_board(&workspace.path().to_string_lossy())
+            .await
+            .expect("default board");
+        let ctx = Context {
+            workspace: workspace.path().to_path_buf(),
+            data_dir: data_dir.path().to_path_buf(),
+            db,
+        };
+        (ctx, workspace, data_dir)
+    }
+
+    /// Creates a task in the board's first column, returning its id.
+    pub(super) async fn task(ctx: &Context, title: &str) -> String {
+        let board = tasks::get_board(ctx).await.expect("get_board");
+        let column_id = board["columns"][0]["id"]
+            .as_str()
+            .expect("a column id")
+            .to_string();
+        let created = tasks::create(json!({ "column_id": column_id, "title": title }), ctx)
+            .await
+            .expect("create task");
+        created["task"]["id"]
+            .as_str()
+            .expect("a task id")
+            .to_string()
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::RpcError;
 

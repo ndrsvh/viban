@@ -157,3 +157,132 @@ async fn create_task_attempt(
 
     Ok(session_id)
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use crate::rpc::test_support::{context, task};
+
+    #[tokio::test]
+    async fn start_session_without_git_creates_a_plain_attempt() {
+        let (ctx, _ws, _data) = context().await;
+        let task_id = task(&ctx, "Plain task").await;
+
+        let result = super::start_session(
+            json!({ "task_id": task_id.clone(), "without_git": true }),
+            &ctx,
+        )
+        .await
+        .expect("start_session");
+        let session_id = result["session_id"].as_str().expect("a session id");
+
+        let attempts = ctx.db.list_attempts(task_id).await.expect("attempts");
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(attempts[0].session_id.as_deref(), Some(session_id));
+        assert!(
+            attempts[0].worktree_path.is_none(),
+            "no worktree in no-git mode"
+        );
+        assert!(attempts[0].branch.is_none(), "no branch in no-git mode");
+    }
+
+    #[tokio::test]
+    async fn start_session_in_a_non_repo_folder_asks_for_git_init() {
+        let (ctx, _ws, _data) = context().await;
+        let task_id = task(&ctx, "Needs git").await;
+        // The workspace tempdir is not a git repository.
+        let result = super::start_session(json!({ "task_id": task_id }), &ctx)
+            .await
+            .expect("start_session");
+        assert_eq!(result["needs_git_init"], true);
+    }
+
+    #[tokio::test]
+    async fn start_session_is_idempotent() {
+        let (ctx, _ws, _data) = context().await;
+        let task_id = task(&ctx, "Once only").await;
+        let first = super::start_session(
+            json!({ "task_id": task_id.clone(), "without_git": true }),
+            &ctx,
+        )
+        .await
+        .expect("first start");
+        let second = super::start_session(json!({ "task_id": task_id, "without_git": true }), &ctx)
+            .await
+            .expect("second start");
+        assert_eq!(first["session_id"], second["session_id"]);
+    }
+
+    #[tokio::test]
+    async fn create_adds_a_second_attempt() {
+        let (ctx, _ws, _data) = context().await;
+        let task_id = task(&ctx, "Two tries").await;
+        super::start_session(
+            json!({ "task_id": task_id.clone(), "without_git": true }),
+            &ctx,
+        )
+        .await
+        .expect("first attempt");
+        super::create(json!({ "task_id": task_id.clone() }), &ctx)
+            .await
+            .expect("second attempt");
+
+        let attempts = ctx.db.list_attempts(task_id).await.expect("attempts");
+        assert_eq!(attempts.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn activate_repoints_the_task_at_an_earlier_attempt() {
+        let (ctx, _ws, _data) = context().await;
+        let task_id = task(&ctx, "Switch me").await;
+        let first = super::start_session(
+            json!({ "task_id": task_id.clone(), "without_git": true }),
+            &ctx,
+        )
+        .await
+        .expect("attempt one");
+        let first_session = first["session_id"].as_str().expect("session").to_string();
+        super::create(json!({ "task_id": task_id.clone() }), &ctx)
+            .await
+            .expect("attempt two");
+
+        // The task now points at the second attempt; activate the first.
+        let attempts = ctx
+            .db
+            .list_attempts(task_id.clone())
+            .await
+            .expect("attempts");
+        let first_attempt = attempts
+            .iter()
+            .find(|a| a.session_id.as_deref() == Some(&first_session))
+            .expect("the first attempt");
+        super::activate(json!({ "attempt_id": first_attempt.id }), &ctx)
+            .await
+            .expect("activate");
+
+        let task = ctx
+            .db
+            .get_task(task_id)
+            .await
+            .expect("task")
+            .expect("the task exists");
+        assert_eq!(task.session_id.as_deref(), Some(first_session.as_str()));
+    }
+
+    #[tokio::test]
+    async fn list_returns_a_tasks_attempts() {
+        let (ctx, _ws, _data) = context().await;
+        let task_id = task(&ctx, "List me").await;
+        super::start_session(
+            json!({ "task_id": task_id.clone(), "without_git": true }),
+            &ctx,
+        )
+        .await
+        .expect("attempt");
+        let result = super::list(json!({ "task_id": task_id }), &ctx)
+            .await
+            .expect("list");
+        assert_eq!(result["attempts"].as_array().expect("attempts").len(), 1);
+    }
+}

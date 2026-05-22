@@ -129,3 +129,106 @@ pub(super) async fn reorder(params: Value, ctx: &Context) -> Result<Value, RpcEr
     ctx.db.reorder_column(column_id, task_ids).await?;
     Ok(json!({ "ok": true }))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use serde_json::json;
+    use tokio::sync::Mutex;
+
+    use crate::rpc::test_support::{context, task};
+
+    #[tokio::test]
+    async fn get_board_returns_the_default_columns() {
+        let (ctx, _ws, _data) = context().await;
+        let board = super::get_board(&ctx).await.expect("get_board");
+        assert!(board["board"]["id"].is_string());
+        assert!(
+            !board["columns"].as_array().expect("columns").is_empty(),
+            "the default board has columns"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_then_get_board_shows_the_task() {
+        let (ctx, _ws, _data) = context().await;
+        let task_id = task(&ctx, "Write docs").await;
+        let board = super::get_board(&ctx).await.expect("get_board");
+        assert!(board["tasks"]
+            .as_array()
+            .expect("tasks")
+            .iter()
+            .any(|t| t["id"].as_str() == Some(&task_id)));
+    }
+
+    #[tokio::test]
+    async fn update_changes_the_title() {
+        let (ctx, _ws, _data) = context().await;
+        let task_id = task(&ctx, "Old title").await;
+        let updated = super::update(json!({ "task_id": task_id, "title": "New title" }), &ctx)
+            .await
+            .expect("update");
+        assert_eq!(updated["task"]["title"], "New title");
+    }
+
+    #[tokio::test]
+    async fn update_rejects_an_unknown_task() {
+        let (ctx, _ws, _data) = context().await;
+        let err = super::update(json!({ "task_id": "nope" }), &ctx)
+            .await
+            .expect_err("unknown task errors");
+        assert_eq!(err.code, -32602);
+    }
+
+    #[tokio::test]
+    async fn delete_removes_a_task() {
+        let (ctx, _ws, _data) = context().await;
+        let task_id = task(&ctx, "Temporary").await;
+        let registry = Arc::new(Mutex::new(HashMap::new()));
+        super::delete(json!({ "task_id": task_id.clone() }), &ctx, &registry)
+            .await
+            .expect("delete");
+        let board = super::get_board(&ctx).await.expect("get_board");
+        assert!(!board["tasks"]
+            .as_array()
+            .expect("tasks")
+            .iter()
+            .any(|t| t["id"].as_str() == Some(&task_id)));
+    }
+
+    #[tokio::test]
+    async fn reorder_changes_the_relative_order() {
+        let (ctx, _ws, _data) = context().await;
+        let first = task(&ctx, "First").await;
+        let second = task(&ctx, "Second").await;
+        let board = super::get_board(&ctx).await.expect("board");
+        let column_id = board["columns"][0]["id"]
+            .as_str()
+            .expect("column")
+            .to_string();
+
+        super::reorder(
+            json!({ "column_id": column_id, "task_ids": [&second, &first] }),
+            &ctx,
+        )
+        .await
+        .expect("reorder");
+
+        let board = super::get_board(&ctx).await.expect("board after reorder");
+        let position_of = |id: &str| -> i64 {
+            board["tasks"]
+                .as_array()
+                .expect("tasks")
+                .iter()
+                .find(|t| t["id"].as_str() == Some(id))
+                .and_then(|t| t["position"].as_i64())
+                .expect("a position")
+        };
+        assert!(
+            position_of(&second) < position_of(&first),
+            "the reordered task moved ahead"
+        );
+    }
+}
