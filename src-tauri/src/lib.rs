@@ -90,7 +90,10 @@ pub fn run() {
             commands::git_diff,
             commands::git_commit,
             commands::git_restore,
-            commands::git_merge
+            commands::git_merge,
+            commands::create_checkpoint,
+            commands::list_checkpoints,
+            commands::restore_checkpoint
         ])
         .setup(|app| {
             let handle = app.handle().clone();

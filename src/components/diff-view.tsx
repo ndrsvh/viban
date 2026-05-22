@@ -3,6 +3,7 @@ import { MergeView } from "@codemirror/merge";
 import { EditorState } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 
+import { CheckpointBar } from "@/components/checkpoint-bar";
 import { RunPanel } from "@/components/run-panel";
 import { Button } from "@/components/ui/button";
 import { rpc } from "@/lib/rpc";
@@ -154,6 +155,8 @@ export function DiffView({ task, onDone }: DiffViewProps) {
           {error}
         </p>
       )}
+
+      <CheckpointBar taskId={task.id} onRestored={loadDiff} />
 
       <div className="flex flex-1 overflow-hidden">
         <aside className="w-64 shrink-0 overflow-y-auto border-r">

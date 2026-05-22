@@ -528,6 +528,20 @@ table — a per-session running total. `sessions.get` returns the session's
 it depends on per-model pricing and on whether `total_cost_usd` is per-turn
 or cumulative — token counts are unambiguous.
 
+### Session checkpoints
+
+While reviewing a task the user can save **checkpoints** of its worktree and
+roll back to them — a save point before letting the agent continue.
+
+A checkpoint is a real commit on the task's branch: `git add -A` then
+`git commit --allow-empty`, capturing everything (tracked and untracked).
+The commit SHA, a label, and the timestamp are stored in a `checkpoints`
+table. Restoring runs `git reset --hard <sha>` + `git clean -fd`, rewinding
+the worktree and dropping anything created since — so it is confirmed first.
+
+`checkpoints.{create,list,restore}` serve the DiffView's checkpoint bar.
+Checkpoints need a worktree, so they do not apply to a no-git task.
+
 ## Coding conventions
 
 ### Rust

@@ -69,7 +69,10 @@ pub(super) async fn merge(params: Value, ctx: &Context) -> Result<Value, RpcErro
 }
 
 /// Loads a task and the path of its git worktree, erroring if it has none.
-async fn task_worktree(ctx: &Context, task_id: &str) -> Result<(Task, PathBuf), RpcError> {
+pub(super) async fn task_worktree(
+    ctx: &Context,
+    task_id: &str,
+) -> Result<(Task, PathBuf), RpcError> {
     let task = ctx
         .db
         .get_task(task_id.to_string())

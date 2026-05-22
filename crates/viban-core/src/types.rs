@@ -114,6 +114,19 @@ pub struct TaskStatusUpdate {
     pub status: AgentStatus,
 }
 
+/// A saved worktree checkpoint — a commit on the task's branch the user can
+/// roll back to.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../src/types/generated/")]
+pub struct Checkpoint {
+    pub id: String,
+    pub task_id: String,
+    pub commit_sha: String,
+    pub label: String,
+    #[ts(type = "number")]
+    pub created_at: i64,
+}
+
 /// Token counts reported by Claude Code. Per turn on a `result` event;
 /// accumulated into a per-session total.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS)]

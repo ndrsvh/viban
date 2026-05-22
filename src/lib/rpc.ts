@@ -9,6 +9,7 @@ import type {
   AgentStatus,
   Attempt,
   Board,
+  Checkpoint,
   Column,
   Task,
   TaskStatusUpdate,
@@ -104,4 +105,12 @@ export const rpc = {
   gitCommit: (taskId: string) => invoke<null>("git_commit", { taskId }),
   gitRestore: (taskId: string) => invoke<null>("git_restore", { taskId }),
   gitMerge: (taskId: string) => invoke<null>("git_merge", { taskId }),
+
+  // -- checkpoints ----------------------------------------------------------
+  createCheckpoint: (taskId: string, label: string) =>
+    invoke<{ checkpoint: Checkpoint }>("create_checkpoint", { taskId, label }),
+  listCheckpoints: (taskId: string) =>
+    invoke<{ checkpoints: Checkpoint[] }>("list_checkpoints", { taskId }),
+  restoreCheckpoint: (checkpointId: string) =>
+    invoke<null>("restore_checkpoint", { checkpointId }),
 };
