@@ -64,6 +64,9 @@ pub async fn ensure_gitignored(repo: &Path, entry: &str) -> Result<()> {
     file.write_all(format!("{prefix}{entry}\n").as_bytes())
         .await
         .context("failed to write .gitignore")?;
+    // tokio's File does not flush on drop — without this an immediate reader
+    // (and tests) can observe an empty file.
+    file.flush().await.context("failed to flush .gitignore")?;
     Ok(())
 }
 
