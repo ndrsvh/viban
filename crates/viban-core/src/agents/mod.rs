@@ -4,7 +4,7 @@
 mod claude_code;
 mod stream;
 
-pub use claude_code::{spawn_claude, ClaudeSession};
+pub use claude_code::{generate_commit_message, spawn_claude, ClaudeSession};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
