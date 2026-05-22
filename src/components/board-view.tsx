@@ -29,6 +29,7 @@ import type { Column, Task } from "@/types/board";
 
 interface BoardViewProps {
   onOpenSession: (sessionId: string) => void;
+  onReview: (task: Task) => void;
 }
 
 // Cards are as wide as a column, so closest-corners is ambiguous between
@@ -40,7 +41,7 @@ const boardCollision: CollisionDetection = (args) => {
 };
 
 /** The Kanban board: columns of draggable task cards. */
-export function BoardView({ onOpenSession }: BoardViewProps) {
+export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
   const [columns, setColumns] = useState<Column[]>([]);
   const [columnTasks, setColumnTasks] = useState<Record<string, string[]>>({});
   const [tasks, setTasks] = useState<Record<string, Task>>({});
@@ -173,6 +174,7 @@ export function BoardView({ onOpenSession }: BoardViewProps) {
               isTarget={column.id === hoverColumn}
               onOpenSession={onOpenSession}
               onStartSession={handleStartSession}
+              onReview={onReview}
               onEdit={openEdit}
               onAddTask={openCreate}
             />
@@ -206,6 +208,7 @@ interface BoardColumnProps {
   isTarget: boolean;
   onOpenSession: (sessionId: string) => void;
   onStartSession: (task: Task) => void;
+  onReview: (task: Task) => void;
   onEdit: (task: Task) => void;
   onAddTask: (columnId: string) => void;
 }
@@ -217,6 +220,7 @@ function BoardColumn({
   isTarget,
   onOpenSession,
   onStartSession,
+  onReview,
   onEdit,
   onAddTask,
 }: BoardColumnProps) {
@@ -245,6 +249,7 @@ function BoardColumn({
                 task={task}
                 onOpenSession={onOpenSession}
                 onStartSession={onStartSession}
+                onReview={onReview}
                 onEdit={onEdit}
               />
             ) : null;

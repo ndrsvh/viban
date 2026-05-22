@@ -39,6 +39,7 @@ function DndWrapper({ children }: { children: ReactNode }) {
 interface Handlers {
   onOpenSession: (sessionId: string) => void;
   onStartSession: (task: Task) => void;
+  onReview: (task: Task) => void;
   onEdit: (task: Task) => void;
 }
 
@@ -46,6 +47,7 @@ function renderCard(task: Task, handlers: Partial<Handlers> = {}) {
   const props: Handlers = {
     onOpenSession: handlers.onOpenSession ?? vi.fn(),
     onStartSession: handlers.onStartSession ?? vi.fn(),
+    onReview: handlers.onReview ?? vi.fn(),
     onEdit: handlers.onEdit ?? vi.fn(),
   };
   render(
@@ -106,5 +108,24 @@ describe("TaskCard", () => {
 
     await user.click(screen.getByRole("button", { name: "Edit" }));
     expect(onEdit).toHaveBeenCalledWith(task);
+  });
+
+  it("offers Review only once the task has a worktree", async () => {
+    const user = userEvent.setup();
+
+    renderCard(makeTask());
+    expect(
+      screen.queryByRole("button", { name: "Review" }),
+    ).not.toBeInTheDocument();
+
+    const onReview = vi.fn();
+    const task = makeTask({
+      session_id: "sess-1",
+      worktree_path: "/repo/.viban/worktrees/t1",
+      branch: "viban/my-task-1",
+    });
+    renderCard(task, { onReview });
+    await user.click(screen.getByRole("button", { name: "Review" }));
+    expect(onReview).toHaveBeenCalledWith(task);
   });
 });

@@ -3,7 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { BoardView } from "@/components/board-view";
 import { ChatView } from "@/components/chat-view";
+import { DiffView } from "@/components/diff-view";
 import { Button } from "@/components/ui/button";
+import type { Task } from "@/types/board";
 import type { ServerHealth } from "@/types/server";
 
 type Status = "connecting" | "ready" | "reconnecting";
@@ -22,6 +24,7 @@ export default function App() {
   const [project, setProject] = useState<string | null | undefined>(undefined);
   const [status, setStatus] = useState<Status>("connecting");
   const [activeSession, setActiveSession] = useState<string | null>(null);
+  const [reviewTask, setReviewTask] = useState<Task | null>(null);
 
   useEffect(() => {
     void invoke<string | null>("current_project")
@@ -66,6 +69,7 @@ export default function App() {
       const path = await invoke<string | null>("open_project");
       if (path) {
         setActiveSession(null);
+        setReviewTask(null);
         setStatus("connecting");
         setProject(path);
       }
@@ -109,6 +113,19 @@ export default function App() {
     );
   }
 
+  if (reviewTask) {
+    return (
+      <div className="h-screen w-screen bg-background text-foreground">
+        <DiffView
+          key={reviewTask.id}
+          taskId={reviewTask.id}
+          taskTitle={reviewTask.title}
+          onDone={() => setReviewTask(null)}
+        />
+      </div>
+    );
+  }
+
   if (activeSession) {
     return (
       <div className="flex h-screen w-screen flex-col bg-background text-foreground">
@@ -145,7 +162,11 @@ export default function App() {
         </Button>
       </header>
       <div className="flex-1 overflow-hidden">
-        <BoardView key={project} onOpenSession={setActiveSession} />
+        <BoardView
+          key={project}
+          onOpenSession={setActiveSession}
+          onReview={setReviewTask}
+        />
       </div>
     </div>
   );

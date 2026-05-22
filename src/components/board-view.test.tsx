@@ -58,7 +58,7 @@ beforeEach(() => {
 describe("BoardView", () => {
   it("loads the board and renders columns with their tasks", async () => {
     boardWith([makeTask()]);
-    render(<BoardView onOpenSession={vi.fn()} />);
+    render(<BoardView onOpenSession={vi.fn()} onReview={vi.fn()} />);
 
     expect(await screen.findByText("Backlog")).toBeInTheDocument();
     expect(screen.getByText("Done")).toBeInTheDocument();
@@ -67,7 +67,7 @@ describe("BoardView", () => {
 
   it("shows a placeholder in an empty column", async () => {
     boardWith([makeTask()]);
-    render(<BoardView onOpenSession={vi.fn()} />);
+    render(<BoardView onOpenSession={vi.fn()} onReview={vi.fn()} />);
 
     await screen.findByText("Backlog");
     // The Done column has no tasks.
@@ -77,7 +77,7 @@ describe("BoardView", () => {
   it("opens the new-task dialog from a column", async () => {
     const user = userEvent.setup();
     boardWith([]);
-    render(<BoardView onOpenSession={vi.fn()} />);
+    render(<BoardView onOpenSession={vi.fn()} onReview={vi.fn()} />);
 
     await screen.findByText("Backlog");
     const addButtons = screen.getAllByRole("button", { name: "+ Add task" });
@@ -95,7 +95,7 @@ describe("BoardView", () => {
       }
       return Promise.resolve();
     });
-    render(<BoardView onOpenSession={onOpenSession} />);
+    render(<BoardView onOpenSession={onOpenSession} onReview={vi.fn()} />);
 
     await screen.findByText("Write tests");
     await user.click(screen.getByRole("button", { name: "Start session" }));
