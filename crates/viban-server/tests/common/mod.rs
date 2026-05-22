@@ -175,6 +175,7 @@ pub fn init_git_repo(dir: &Path) {
     run_git(dir, &["init"]);
     run_git(dir, &["config", "user.email", "test@viban.dev"]);
     run_git(dir, &["config", "user.name", "viban test"]);
+    run_git(dir, &["config", "core.autocrlf", "false"]);
     std::fs::write(dir.join("README.md"), "viban test repo\n").expect("write README");
     run_git(dir, &["add", "."]);
     run_git(dir, &["commit", "-m", "initial"]);
