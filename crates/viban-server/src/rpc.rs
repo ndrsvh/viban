@@ -404,16 +404,29 @@ async fn tasks_delete(
     Ok(json!({ "ok": true }))
 }
 
-/// Creates a git worktree + branch for a task and links a fresh session to it.
+/// Whether the project folder is its own git repository with at least one
+/// commit — the precondition for creating a worktree.
+async fn repo_ready(ctx: &Context) -> bool {
+    git::is_repo_root(&ctx.workspace).await && git::has_head(&ctx.workspace).await
+}
+
+/// Starts a task's first session and links it to the task.
 ///
 /// Idempotent: a task that already has a session returns its existing id.
-/// When the project folder is not yet a git repository, this returns
+///
+/// With `without_git: true` the agent runs directly in the project folder and
+/// no worktree is created. Otherwise the task gets an isolated git worktree;
+/// when the project folder is not yet its own git repository this returns
 /// `{ "needs_git_init": true }` unless the caller passes `init_git: true`, in
-/// which case the folder is initialized first.
+/// which case a repository is initialized first.
 async fn tasks_start_session(params: Value, ctx: &Context) -> Result<Value, RpcError> {
     let task_id = str_param(&params, "task_id")?.to_string();
     let init_git = params
         .get("init_git")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let without_git = params
+        .get("without_git")
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let mut task = ctx
@@ -427,10 +440,15 @@ async fn tasks_start_session(params: Value, ctx: &Context) -> Result<Value, RpcE
         return Ok(json!({ "session_id": session_id }));
     }
 
-    // A worktree needs a git repository with at least one commit. If the
-    // project folder is not one yet, ask the caller to confirm initializing it.
-    let repo_ready = git::is_git_repo(&ctx.workspace).await && git::has_head(&ctx.workspace).await;
-    if !repo_ready {
+    // No-git mode: run the agent straight in the project folder.
+    if without_git {
+        let session_id = create_task_attempt(ctx, &mut task, false).await?;
+        return Ok(json!({ "session_id": session_id }));
+    }
+
+    // A worktree needs the project folder to be its own git repository with a
+    // commit. If it is not, ask the caller how to proceed.
+    if !repo_ready(ctx).await {
         if !init_git {
             return Ok(json!({ "needs_git_init": true }));
         }
@@ -439,45 +457,56 @@ async fn tasks_start_session(params: Value, ctx: &Context) -> Result<Value, RpcE
             .map_err(|err| RpcError::internal(format!("failed to initialize git: {err}")))?;
     }
 
-    let session_id = create_task_attempt(ctx, &mut task).await?;
+    let session_id = create_task_attempt(ctx, &mut task, true).await?;
     Ok(json!({ "session_id": session_id }))
 }
 
-/// Creates a new attempt for `task`: a git worktree + branch + session, an
-/// `attempts` row, and repoints the task's active fields at it. The project
-/// folder must already be a git repository with a commit.
-async fn create_task_attempt(ctx: &Context, task: &mut Task) -> Result<String, RpcError> {
+/// Creates a new attempt for `task`: a session, an `attempts` row, and repoints
+/// the task's active fields at it.
+///
+/// With `with_git` the attempt also gets its own git worktree + branch (the
+/// project folder must already be a ready repository). Without it the agent
+/// runs directly in the project folder, and the attempt carries no worktree.
+async fn create_task_attempt(
+    ctx: &Context,
+    task: &mut Task,
+    with_git: bool,
+) -> Result<String, RpcError> {
     let attempt_id = new_id();
     let session_id = new_id();
-    let id_fragment: String = attempt_id.chars().take(8).collect();
-    let branch = format!("viban/{}-{}", git::slugify(&task.title), id_fragment);
-    let worktree_path = ctx.data_dir.join("worktrees").join(&attempt_id);
 
-    if let Some(parent) = worktree_path.parent() {
-        tokio::fs::create_dir_all(parent)
+    let (worktree_path, branch) = if with_git {
+        let id_fragment: String = attempt_id.chars().take(8).collect();
+        let branch = format!("viban/{}-{}", git::slugify(&task.title), id_fragment);
+        let worktree_path = ctx.data_dir.join("worktrees").join(&attempt_id);
+        if let Some(parent) = worktree_path.parent() {
+            tokio::fs::create_dir_all(parent).await.map_err(|err| {
+                RpcError::internal(format!("failed to create worktree dir: {err}"))
+            })?;
+        }
+        git::worktree_add(&ctx.workspace, &worktree_path, &branch)
             .await
-            .map_err(|err| RpcError::internal(format!("failed to create worktree dir: {err}")))?;
-    }
-    git::worktree_add(&ctx.workspace, &worktree_path, &branch)
-        .await
-        .map_err(|err| RpcError::internal(format!("failed to create worktree: {err}")))?;
+            .map_err(|err| RpcError::internal(format!("failed to create worktree: {err}")))?;
+        (Some(worktree_path.display().to_string()), Some(branch))
+    } else {
+        (None, None)
+    };
 
-    let worktree_str = worktree_path.display().to_string();
     ctx.db
         .create_attempt(Attempt {
             id: attempt_id,
             task_id: task.id.clone(),
             session_id: Some(session_id.clone()),
-            worktree_path: Some(worktree_str.clone()),
-            branch: Some(branch.clone()),
+            worktree_path: worktree_path.clone(),
+            branch: branch.clone(),
             created_at: now_millis(),
         })
         .await
         .map_err(|err| RpcError::internal(format!("db error: {err}")))?;
 
     task.session_id = Some(session_id.clone());
-    task.worktree_path = Some(worktree_str);
-    task.branch = Some(branch);
+    task.worktree_path = worktree_path;
+    task.branch = branch;
     ctx.db
         .update_task(task.clone())
         .await
@@ -486,15 +515,12 @@ async fn create_task_attempt(ctx: &Context, task: &mut Task) -> Result<String, R
     Ok(session_id)
 }
 
-/// Starts an additional attempt for a task — a fresh worktree, branch, and
-/// session — leaving earlier attempts intact. Like `tasks.start_session` it
-/// returns `{ needs_git_init: true }` if the project is not a git repo yet.
+/// Starts an additional attempt for a task, leaving earlier attempts intact.
+/// The attempt gets its own git worktree when the project is a ready
+/// repository, and otherwise runs directly in the project folder — matching
+/// how the task's first session was started.
 async fn attempts_create(params: Value, ctx: &Context) -> Result<Value, RpcError> {
     let task_id = str_param(&params, "task_id")?.to_string();
-    let init_git = params
-        .get("init_git")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
     let mut task = ctx
         .db
         .get_task(task_id.clone())
@@ -502,17 +528,7 @@ async fn attempts_create(params: Value, ctx: &Context) -> Result<Value, RpcError
         .map_err(|err| RpcError::internal(format!("db error: {err}")))?
         .ok_or_else(|| RpcError::invalid_params(format!("unknown task: {task_id}")))?;
 
-    let repo_ready = git::is_git_repo(&ctx.workspace).await && git::has_head(&ctx.workspace).await;
-    if !repo_ready {
-        if !init_git {
-            return Ok(json!({ "needs_git_init": true }));
-        }
-        git::prepare_repo(&ctx.workspace)
-            .await
-            .map_err(|err| RpcError::internal(format!("failed to initialize git: {err}")))?;
-    }
-
-    let session_id = create_task_attempt(ctx, &mut task).await?;
+    let session_id = create_task_attempt(ctx, &mut task, repo_ready(ctx).await).await?;
     Ok(json!({ "session_id": session_id }))
 }
 

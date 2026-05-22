@@ -431,6 +431,24 @@ another (a card with a session shows a **New attempt** button);
 selector when a task has more than one). Worktrees are keyed by attempt id.
 Design and rationale: `docs/decisions/0002-multiple-attempts-per-task.md`.
 
+### Work without Git
+
+A worktree needs the project folder to be **its own** git repository — being
+merely a subdirectory of an outer repo does not count, since a worktree would
+then branch off that outer repo. `git.is_repo_root` (compare `git rev-parse
+--show-toplevel` against the folder) makes this distinction; `prepare_repo`
+initializes a *dedicated* repo when the folder only sits inside an ancestor
+one.
+
+When the folder is not its own repository, `tasks.start_session` returns
+`needs_git_init` and the UI shows a dialog with three choices: **Initialize
+git** (`init_git: true` — make a repo, then use worktrees as usual), **Work
+without Git** (`without_git: true`), or cancel. In no-git mode the agent runs
+directly in the project folder: the attempt carries no `worktree_path` or
+`branch`, and diff review / merge — which need a worktree — do not apply.
+`attempts.create` follows the task's mode automatically (worktree when the
+project is a ready repository, otherwise a plain in-folder session).
+
 ## Coding conventions
 
 ### Rust

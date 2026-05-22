@@ -142,14 +142,19 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
     }
   }
 
-  async function handleStartSession(task: Task, initGit = false) {
+  async function handleStartSession(
+    task: Task,
+    options: { initGit?: boolean; withoutGit?: boolean } = {},
+  ) {
     setActionError(null);
     try {
-      // The server creates the worktree + branch and links a session. If the
-      // project folder is not a git repo yet, it asks for confirmation first.
+      // The server links a session to the task. By default that means an
+      // isolated git worktree; if the project folder is not a git repo it
+      // asks how to proceed first (init git, or work without git).
       const result = await invoke<StartSessionResult>("start_session", {
         taskId: task.id,
-        initGit,
+        initGit: options.initGit ?? false,
+        withoutGit: options.withoutGit ?? false,
       });
       if (result.needs_git_init) {
         setGitInitTask(task);
@@ -171,7 +176,15 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
     const task = gitInitTask;
     if (!task) return;
     setGitInitBusy(true);
-    await handleStartSession(task, true);
+    await handleStartSession(task, { initGit: true });
+    setGitInitBusy(false);
+  }
+
+  async function confirmWorkWithoutGit() {
+    const task = gitInitTask;
+    if (!task) return;
+    setGitInitBusy(true);
+    await handleStartSession(task, { withoutGit: true });
     setGitInitBusy(false);
   }
 
@@ -181,10 +194,6 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
       const result = await invoke<StartSessionResult>("create_attempt", {
         taskId: task.id,
       });
-      if (result.needs_git_init) {
-        setGitInitTask(task);
-        return;
-      }
       if (result.session_id) {
         await loadBoard();
         onOpenSession(result.session_id);
@@ -295,6 +304,7 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
         open={gitInitTask !== null}
         busy={gitInitBusy}
         onConfirm={() => void confirmGitInit()}
+        onWorkWithoutGit={() => void confirmWorkWithoutGit()}
         onOpenChange={(open) => {
           if (!open && !gitInitBusy) setGitInitTask(null);
         }}
