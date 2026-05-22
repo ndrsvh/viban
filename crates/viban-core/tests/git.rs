@@ -325,3 +325,58 @@ async fn prepare_repo_is_a_noop_for_a_ready_repository() {
         "a ready repo gets no new commit"
     );
 }
+
+#[tokio::test]
+async fn merge_branch_brings_in_the_branch_commits() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    init_repo(root);
+
+    // A worktree branch with a new committed file.
+    let worktree = root.join("wt");
+    git::worktree_add(root, &worktree, "viban/feature")
+        .await
+        .expect("worktree add");
+    std::fs::write(worktree.join("feature.txt"), "task output\n").expect("write");
+    run_git(&worktree, &["add", "."]);
+    run_git(&worktree, &["commit", "-m", "task work"]);
+
+    git::merge_branch(root, "viban/feature")
+        .await
+        .expect("merge");
+
+    assert!(
+        root.join("feature.txt").is_file(),
+        "the branch's file is merged into the project root"
+    );
+}
+
+#[tokio::test]
+async fn merge_branch_aborts_and_errors_on_conflict() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    init_repo(root);
+
+    // The branch edits file.txt one way.
+    let worktree = root.join("wt");
+    git::worktree_add(root, &worktree, "viban/feature")
+        .await
+        .expect("worktree add");
+    std::fs::write(worktree.join("file.txt"), "branch version\n").expect("write");
+    run_git(&worktree, &["add", "."]);
+    run_git(&worktree, &["commit", "-m", "branch edit"]);
+
+    // The project root edits the same file differently.
+    std::fs::write(root.join("file.txt"), "root version\n").expect("write");
+    run_git(root, &["add", "."]);
+    run_git(root, &["commit", "-m", "root edit"]);
+
+    assert!(
+        git::merge_branch(root, "viban/feature").await.is_err(),
+        "a conflicting merge must error"
+    );
+    assert!(
+        !root.join(".git").join("MERGE_HEAD").exists(),
+        "the failed merge is aborted, leaving no merge in progress"
+    );
+}

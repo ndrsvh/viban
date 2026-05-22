@@ -109,6 +109,39 @@ describe("BoardView", () => {
     });
   });
 
+  it("merges a task after confirmation", async () => {
+    const user = userEvent.setup();
+    let mergedTaskId: unknown;
+    boardWith(
+      [
+        makeTask({
+          session_id: "s1",
+          worktree_path: "/repo/.viban/worktrees/t1",
+          branch: "viban/write-tests-t1",
+        }),
+      ],
+      (command, args) => {
+        if (command === "git_merge") {
+          mergedTaskId = args?.taskId;
+        }
+        return Promise.resolve();
+      },
+    );
+    render(<BoardView onOpenSession={vi.fn()} onReview={vi.fn()} />);
+
+    await screen.findByText("Write tests");
+    await user.click(screen.getByRole("button", { name: "Merge" }));
+
+    // A confirmation dialog appears instead of merging immediately.
+    expect(
+      await screen.findByText("Merge this task?"),
+    ).toBeInTheDocument();
+    expect(mergedTaskId).toBeUndefined();
+
+    await user.click(screen.getByRole("button", { name: "Merge branch" }));
+    await waitFor(() => expect(mergedTaskId).toBe("t1"));
+  });
+
   it("confirms git initialization when the folder is not a repo", async () => {
     const user = userEvent.setup();
     const onOpenSession = vi.fn();

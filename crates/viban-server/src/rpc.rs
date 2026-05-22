@@ -133,6 +133,7 @@ async fn dispatch(
         "git.diff" => git_diff(params, ctx).await,
         "git.commit" => git_commit(params, ctx).await,
         "git.restore" => git_restore(params, ctx).await,
+        "git.merge" => git_merge(params, ctx).await,
         other => Err(RpcError::method_not_found(other)),
     }
 }
@@ -504,6 +505,34 @@ async fn git_restore(params: Value, ctx: &Context) -> Result<Value, RpcError> {
         .await
         .map_err(|err| RpcError::internal(format!("failed to discard worktree: {err}")))?;
     move_task_to_column(ctx, &mut task, "In Progress").await?;
+    Ok(json!({ "ok": true }))
+}
+
+/// Merges a task's branch into the project, tears down its worktree and
+/// branch, and moves the task to the Done column.
+async fn git_merge(params: Value, ctx: &Context) -> Result<Value, RpcError> {
+    let task_id = str_param(&params, "task_id")?;
+    let (mut task, worktree) = task_worktree(ctx, task_id).await?;
+    let branch = task
+        .branch
+        .clone()
+        .ok_or_else(|| RpcError::invalid_params(format!("task {task_id} has no branch")))?;
+
+    git::merge_branch(&ctx.workspace, &branch)
+        .await
+        .map_err(|err| RpcError::internal(format!("failed to merge: {err}")))?;
+
+    // The merge landed — tear down the task's worktree and branch.
+    if let Err(err) = git::worktree_remove(&ctx.workspace, &worktree, true).await {
+        tracing::warn!(%err, "failed to remove worktree after merge");
+    }
+    if let Err(err) = git::branch_delete(&ctx.workspace, &branch).await {
+        tracing::warn!(%err, "failed to delete branch after merge");
+    }
+
+    task.worktree_path = None;
+    task.branch = None;
+    move_task_to_column(ctx, &mut task, "Done").await?;
     Ok(json!({ "ok": true }))
 }
 

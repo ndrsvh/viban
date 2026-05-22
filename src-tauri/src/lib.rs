@@ -75,7 +75,8 @@ pub fn run() {
             commands::reorder_tasks,
             commands::git_diff,
             commands::git_commit,
-            commands::git_restore
+            commands::git_restore,
+            commands::git_merge
         ])
         .setup(|app| {
             let handle = app.handle().clone();

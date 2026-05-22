@@ -177,6 +177,45 @@ async fn start_session_with_init_git_initializes_the_repo_and_worktree() {
 }
 
 #[tokio::test]
+async fn git_merge_merges_the_branch_and_finishes_the_task() {
+    let mut server = TestServer::start().await;
+    let task_id = task_with_worktree(&mut server).await;
+    let worktree = worktree_path(server.workspace(), &task_id);
+    std::fs::write(worktree.join("feature.txt"), "task output\n").expect("write");
+    server
+        .call("git.commit", json!({ "task_id": task_id }))
+        .await;
+
+    server
+        .call("git.merge", json!({ "task_id": task_id }))
+        .await;
+
+    // The task's committed file is now in the project root.
+    assert!(
+        server.workspace().join("feature.txt").is_file(),
+        "the branch was merged into the project"
+    );
+    // The worktree is torn down.
+    assert!(!worktree.exists(), "the worktree was removed");
+
+    // The task is in Done with its worktree fields cleared.
+    let done = column_id(&mut server, "Done").await;
+    let board = server.call("boards.get", Value::Null).await;
+    let task = board["tasks"]
+        .as_array()
+        .expect("tasks")
+        .iter()
+        .find(|task| task["id"].as_str() == Some(&task_id))
+        .expect("the task");
+    assert_eq!(task["column_id"].as_str(), Some(done.as_str()));
+    assert!(task["branch"].is_null(), "the branch field is cleared");
+    assert!(
+        task["worktree_path"].is_null(),
+        "the worktree field is cleared"
+    );
+}
+
+#[tokio::test]
 async fn git_diff_on_a_task_without_a_worktree_errors() {
     let mut server = TestServer::start().await;
     let board_column = server.first_column_id().await;

@@ -281,3 +281,14 @@ pub async fn git_restore(task_id: String, state: State<'_, AppState>) -> Result<
         .map_err(|err| err.to_string())?;
     Ok(())
 }
+
+/// Merges a task's branch into the project, finishing the task (`git.merge`).
+#[tauri::command]
+pub async fn git_merge(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let client = state.client().await.ok_or("server not connected")?;
+    client
+        .call("git.merge", json!({ "task_id": task_id }))
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
