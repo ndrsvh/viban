@@ -90,11 +90,18 @@ Namespaced as `<area>.<action>`:
 
 ### Streaming events
 
-Long-running operations (agent runs, file watch) emit JSON-RPC notifications keyed by a subscription id:
+Long-running operations (agent runs, file watch, live task status) emit
+JSON-RPC `events.update` notifications, each tagged with a **topic** string
+and a JSON **payload**. The client subscribes by topic — the transport is not
+tied to sessions, so any feature can push on its own topic.
 
-1. Client calls `agents.spawn` → server returns `{ session_id, subscription_id }`
-2. Server emits `events.update` notifications with `{ subscription_id, event: AgentEvent }` for each agent event
+1. Client calls `agents.spawn` → server returns `{ session_id }`
+2. Server emits `events.update` notifications with `{ topic, payload }`. For an
+   agent run the topic is the session id and the payload is an `AgentEvent`
 3. Client calls `agents.cancel` → server tears down, stops emitting
+
+Server-side, the per-connection `Context` carries an `EventSink`; any handler
+or spawned task can call `events.emit(topic, payload)` to push a notification.
 
 ### Bootstrapping (local mode)
 
