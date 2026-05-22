@@ -1,0 +1,26 @@
+/** Mirror of `viban_core::types::Board`. */
+export interface Board {
+  id: string;
+  name: string;
+  project_path: string;
+  created_at: number;
+}
+
+/** Mirror of `viban_core::types::Column`. */
+export interface Column {
+  id: string;
+  board_id: string;
+  name: string;
+  position: number;
+}
+
+/** Mirror of `viban_core::types::Task`. */
+export interface Task {
+  id: string;
+  column_id: string;
+  title: string;
+  description: string;
+  position: number;
+  session_id: string | null;
+  created_at: number;
+}

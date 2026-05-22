@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
+import { BoardView } from "@/components/board-view";
 import { ChatView } from "@/components/chat-view";
-import { SessionSidebar } from "@/components/session-sidebar";
+import { Button } from "@/components/ui/button";
 import type { ServerHealth } from "@/types/server";
-import type { Session } from "@/types/session";
 
 type Status = "connecting" | "ready" | "reconnecting";
 
@@ -13,8 +13,7 @@ const POLL_INTERVAL_MS = 1500;
 
 export default function App() {
   const [status, setStatus] = useState<Status>("connecting");
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [activeSession, setActiveSession] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -31,7 +30,6 @@ export default function App() {
       } catch {
         if (cancelled) return;
         failures += 1;
-        // Tolerate one transient miss before showing a degraded state.
         if (failures >= 2) {
           setStatus(everConnected ? "reconnecting" : "connecting");
         }
@@ -46,19 +44,6 @@ export default function App() {
     };
   }, []);
 
-  const refreshSessions = useCallback(async () => {
-    try {
-      const result = await invoke<{ sessions: Session[] }>("list_sessions");
-      setSessions(result.sessions);
-    } catch {
-      // A failed list just means the server blipped; the poll surfaces it.
-    }
-  }, []);
-
-  useEffect(() => {
-    if (status === "ready") void refreshSessions();
-  }, [status, refreshSessions]);
-
   if (status !== "ready") {
     return (
       <main className="flex h-screen w-screen flex-col items-center justify-center gap-2 bg-background text-foreground">
@@ -72,27 +57,32 @@ export default function App() {
     );
   }
 
-  return (
-    <div className="flex h-screen w-screen bg-background text-foreground">
-      <SessionSidebar
-        sessions={sessions}
-        selectedId={selectedId}
-        onSelect={setSelectedId}
-        onNew={() => setSelectedId(crypto.randomUUID())}
-      />
-      <main className="flex-1 overflow-hidden">
-        {selectedId ? (
+  if (activeSession) {
+    return (
+      <div className="flex h-screen w-screen flex-col bg-background text-foreground">
+        <header className="flex items-center border-b px-2 py-1.5">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setActiveSession(null)}
+          >
+            ← Board
+          </Button>
+        </header>
+        <div className="flex-1 overflow-hidden">
           <ChatView
-            key={selectedId}
-            sessionId={selectedId}
-            onSpawned={refreshSessions}
+            key={activeSession}
+            sessionId={activeSession}
+            onSpawned={() => {}}
           />
-        ) : (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            Select a session or start a new one.
-          </div>
-        )}
-      </main>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-screen w-screen bg-background text-foreground">
+      <BoardView onOpenSession={setActiveSession} />
     </div>
   );
 }

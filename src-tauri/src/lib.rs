@@ -56,7 +56,12 @@ pub fn run() {
             commands::spawn_session,
             commands::send_message,
             commands::list_sessions,
-            commands::get_session
+            commands::get_session,
+            commands::get_board,
+            commands::create_task,
+            commands::update_task,
+            commands::delete_task,
+            commands::reorder_tasks
         ])
         .setup(|app| {
             let handle = app.handle().clone();
