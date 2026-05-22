@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use viban_core::types::Task;
 use viban_core::{git, new_id};
 
-use super::{now_millis, str_param, Context, RpcError, SessionRegistry};
+use super::{now_millis, str_param, Context, RpcError};
 
 /// Returns the workspace's board with its columns and tasks. Serves
 /// `boards.get`.
@@ -85,17 +85,13 @@ pub(super) async fn update(params: Value, ctx: &Context) -> Result<Value, RpcErr
 
 /// Deletes a task, tearing down every attempt's worktree, branch, and any
 /// live agent.
-pub(super) async fn delete(
-    params: Value,
-    ctx: &Context,
-    registry: &SessionRegistry,
-) -> Result<Value, RpcError> {
+pub(super) async fn delete(params: Value, ctx: &Context) -> Result<Value, RpcError> {
     let task_id = str_param(&params, "task_id")?.to_string();
 
     let attempts = ctx.db.list_attempts(task_id.clone()).await?;
     for attempt in &attempts {
         if let Some(session_id) = &attempt.session_id {
-            registry.lock().await.remove(session_id);
+            ctx.registry.lock().await.remove(session_id);
         }
         if let Some(worktree_path) = &attempt.worktree_path {
             if let Err(err) =
@@ -132,11 +128,7 @@ pub(super) async fn reorder(params: Value, ctx: &Context) -> Result<Value, RpcEr
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-    use std::sync::Arc;
-
     use serde_json::json;
-    use tokio::sync::Mutex;
 
     use crate::rpc::test_support::{context, task};
 
@@ -186,8 +178,7 @@ mod tests {
     async fn delete_removes_a_task() {
         let (ctx, _ws, _data) = context().await;
         let task_id = task(&ctx, "Temporary").await;
-        let registry = Arc::new(Mutex::new(HashMap::new()));
-        super::delete(json!({ "task_id": task_id.clone() }), &ctx, &registry)
+        super::delete(json!({ "task_id": task_id.clone() }), &ctx)
             .await
             .expect("delete");
         let board = super::get_board(&ctx).await.expect("get_board");

@@ -2,7 +2,7 @@
 //!
 //! A background read loop demultiplexes the socket: framed responses (which
 //! carry an `id`) complete the matching pending call; `events.update`
-//! notifications are routed to the subscription named in their params.
+//! notifications are routed to the subscriber of the `topic` in their params.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -87,20 +87,20 @@ impl Client {
         rx.await.context("response channel dropped")?
     }
 
-    /// Registers a subscription and returns the receiver for its
-    /// `events.update` notifications.
-    pub async fn subscribe(&self, subscription_id: &str) -> mpsc::UnboundedReceiver<Value> {
+    /// Subscribes to a `topic` and returns the receiver for its
+    /// `events.update` notification payloads.
+    pub async fn subscribe(&self, topic: &str) -> mpsc::UnboundedReceiver<Value> {
         let (tx, rx) = mpsc::unbounded_channel();
         self.subscriptions
             .lock()
             .await
-            .insert(subscription_id.to_string(), tx);
+            .insert(topic.to_string(), tx);
         rx
     }
 
-    /// Drops a subscription so its events are no longer routed anywhere.
-    pub async fn unsubscribe(&self, subscription_id: &str) {
-        self.subscriptions.lock().await.remove(subscription_id);
+    /// Drops a topic subscription so its events are no longer routed anywhere.
+    pub async fn unsubscribe(&self, topic: &str) {
+        self.subscriptions.lock().await.remove(topic);
     }
 }
 
@@ -126,13 +126,11 @@ async fn read_loop(mut read: SplitStream<Stream>, pending: Pending, subscription
                 let _ = tx.send(extract_result(&value));
             }
         } else if value.get("method").and_then(Value::as_str) == Some("events.update") {
-            let sub_id = value
-                .pointer("/params/subscription_id")
-                .and_then(Value::as_str);
-            let event = value.pointer("/params/event");
-            if let (Some(sub_id), Some(event)) = (sub_id, event) {
-                if let Some(tx) = subscriptions.lock().await.get(sub_id) {
-                    let _ = tx.send(event.clone());
+            let topic = value.pointer("/params/topic").and_then(Value::as_str);
+            let payload = value.pointer("/params/payload");
+            if let (Some(topic), Some(payload)) = (topic, payload) {
+                if let Some(tx) = subscriptions.lock().await.get(topic) {
+                    let _ = tx.send(payload.clone());
                 }
             }
         }

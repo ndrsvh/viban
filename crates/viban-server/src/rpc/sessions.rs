@@ -12,16 +12,11 @@ use viban_core::db::Db;
 use viban_core::types::{Message, Session};
 use viban_core::{new_id, AgentEvent};
 
-use super::{now_millis, str_param, Context, RpcError, SessionRegistry};
+use super::{now_millis, str_param, Context, EventSink, RpcError, SessionRegistry};
 
 /// Creates and persists a session, spawns a fresh Claude Code agent, and
 /// starts streaming + persisting its events. Serves the `agents.spawn` method.
-pub(super) async fn spawn(
-    params: Value,
-    ctx: &Context,
-    registry: &SessionRegistry,
-    outbound: &mpsc::UnboundedSender<String>,
-) -> Result<Value, RpcError> {
+pub(super) async fn spawn(params: Value, ctx: &Context) -> Result<Value, RpcError> {
     let session_id = str_param(&params, "session_id")?.to_string();
     let prompt = str_param(&params, "prompt")?;
 
@@ -37,16 +32,16 @@ pub(super) async fn spawn(
         .await?;
     persist_user_message(&ctx.db, &session_id, prompt).await?;
 
-    let (mut agent, events) = spawn_claude(&workdir, None)?;
+    let (mut agent, agent_events) = spawn_claude(&workdir, None)?;
     agent.send_message(prompt).await?;
 
-    registry.lock().await.insert(session_id.clone(), agent);
+    ctx.registry.lock().await.insert(session_id.clone(), agent);
     spawn_event_pump(
-        events,
+        agent_events,
         session_id.clone(),
         ctx.db.clone(),
-        Arc::clone(registry),
-        outbound.clone(),
+        Arc::clone(&ctx.registry),
+        ctx.events.clone(),
     );
 
     Ok(json!({ "session_id": session_id }))
@@ -54,18 +49,13 @@ pub(super) async fn spawn(
 
 /// Sends a follow-up message, transparently resuming the agent from SQLite if
 /// it is no longer running.
-pub(super) async fn send_message(
-    params: Value,
-    ctx: &Context,
-    registry: &SessionRegistry,
-    outbound: &mpsc::UnboundedSender<String>,
-) -> Result<Value, RpcError> {
+pub(super) async fn send_message(params: Value, ctx: &Context) -> Result<Value, RpcError> {
     let session_id = str_param(&params, "session_id")?.to_string();
     let prompt = str_param(&params, "prompt")?;
 
     // Live session: send straight to the running agent.
     let delivered = {
-        let mut sessions = registry.lock().await;
+        let mut sessions = ctx.registry.lock().await;
         match sessions.get_mut(&session_id) {
             Some(agent) => {
                 agent.send_message(prompt).await?;
@@ -86,17 +76,17 @@ pub(super) async fn send_message(
             .claude_session_id
             .ok_or_else(|| RpcError::internal("session cannot be resumed: no Claude Code id"))?;
 
-        let (mut agent, events) =
+        let (mut agent, agent_events) =
             spawn_claude(Path::new(&stored.project_path), Some(&claude_session_id))?;
         agent.send_message(prompt).await?;
 
-        registry.lock().await.insert(session_id.clone(), agent);
+        ctx.registry.lock().await.insert(session_id.clone(), agent);
         spawn_event_pump(
-            events,
+            agent_events,
             session_id.clone(),
             ctx.db.clone(),
-            Arc::clone(registry),
-            outbound.clone(),
+            Arc::clone(&ctx.registry),
+            ctx.events.clone(),
         );
     }
 
@@ -135,18 +125,18 @@ async fn agent_workdir(ctx: &Context, session_id: &str) -> Result<PathBuf, RpcEr
         .unwrap_or_else(|| ctx.workspace.clone()))
 }
 
-/// Forwards every agent event as an `events.update` notification, persists the
-/// conversational ones, records the Claude Code session id, and drops the
-/// session when the agent exits.
+/// Forwards every agent event as an `events.update` notification on the
+/// session's topic, persists the conversational ones, records the Claude Code
+/// session id, and drops the session when the agent exits.
 fn spawn_event_pump(
-    mut events: mpsc::UnboundedReceiver<AgentEvent>,
+    mut agent_events: mpsc::UnboundedReceiver<AgentEvent>,
     session_id: String,
     db: Db,
     registry: SessionRegistry,
-    outbound: mpsc::UnboundedSender<String>,
+    events: EventSink,
 ) {
     tokio::spawn(async move {
-        while let Some(event) = events.recv().await {
+        while let Some(event) = agent_events.recv().await {
             if let AgentEvent::SessionStarted {
                 session_id: claude_id,
             } = &event
@@ -162,14 +152,8 @@ fn spawn_event_pump(
                 tracing::warn!(%err, "failed to persist agent event");
             }
 
-            let notification = json!({
-                "jsonrpc": "2.0",
-                "method": "events.update",
-                "params": { "subscription_id": session_id, "event": event },
-            });
-            if outbound.send(notification.to_string()).is_err() {
-                break;
-            }
+            // The session id is the topic — the chat view subscribes to it.
+            events.emit(&session_id, &event);
         }
         registry.lock().await.remove(&session_id);
         tracing::debug!(session_id, "agent session ended");

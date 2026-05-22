@@ -11,6 +11,7 @@
 //! into an internal `RpcError` via `?` (see the `From` impl below).
 
 mod attempts;
+mod events;
 mod review;
 mod sessions;
 mod tasks;
@@ -22,21 +23,29 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::Mutex;
 
 use viban_core::agents::ClaudeSession;
 use viban_core::db::Db;
 
+pub use events::EventSink;
+
 /// Running agent sessions for one connection, keyed by viban session id.
 pub type SessionRegistry = Arc<Mutex<HashMap<String, ClaudeSession>>>;
 
-/// Shared state for method handlers.
+/// Everything a method handler needs — one `Context` per connection. Holding
+/// the registry and event sink here keeps every handler to the uniform
+/// `async fn(Value, &Context)` shape and lets any handler push notifications.
 pub struct Context {
     /// The user's project folder. viban never writes into it.
     pub workspace: PathBuf,
     /// viban's own data directory for this project (database, worktrees).
     pub data_dir: PathBuf,
     pub db: Db,
+    /// Live agent sessions on this connection.
+    pub registry: SessionRegistry,
+    /// Push channel for `events.update` notifications to this client.
+    pub events: EventSink,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,12 +101,7 @@ impl From<anyhow::Error> for RpcError {
 
 /// Parses a raw JSON-RPC request, dispatches it, and returns the serialized
 /// response.
-pub async fn handle(
-    raw: &str,
-    ctx: &Context,
-    registry: &SessionRegistry,
-    outbound: &mpsc::UnboundedSender<String>,
-) -> String {
+pub async fn handle(raw: &str, ctx: &Context) -> String {
     let request: Request = match serde_json::from_str(raw) {
         Ok(request) => request,
         Err(err) => {
@@ -110,7 +114,7 @@ pub async fn handle(
         }
     };
 
-    let response = match dispatch(&request.method, request.params, ctx, registry, outbound).await {
+    let response = match dispatch(&request.method, request.params, ctx).await {
         Ok(result) => Response {
             jsonrpc: "2.0",
             id: request.id,
@@ -127,27 +131,21 @@ pub async fn handle(
     serialize(response)
 }
 
-async fn dispatch(
-    method: &str,
-    params: Value,
-    ctx: &Context,
-    registry: &SessionRegistry,
-    outbound: &mpsc::UnboundedSender<String>,
-) -> Result<Value, RpcError> {
+async fn dispatch(method: &str, params: Value, ctx: &Context) -> Result<Value, RpcError> {
     match method {
         "server.health" => Ok(json!({
             "status": "ok",
             "version": viban_core::VERSION,
             "workspace": ctx.workspace.display().to_string(),
         })),
-        "agents.spawn" => sessions::spawn(params, ctx, registry, outbound).await,
-        "sessions.send_message" => sessions::send_message(params, ctx, registry, outbound).await,
+        "agents.spawn" => sessions::spawn(params, ctx).await,
+        "sessions.send_message" => sessions::send_message(params, ctx).await,
         "sessions.list" => sessions::list(ctx).await,
         "sessions.get" => sessions::get(params, ctx).await,
         "boards.get" => tasks::get_board(ctx).await,
         "tasks.create" => tasks::create(params, ctx).await,
         "tasks.update" => tasks::update(params, ctx).await,
-        "tasks.delete" => tasks::delete(params, ctx, registry).await,
+        "tasks.delete" => tasks::delete(params, ctx).await,
         "tasks.reorder" => tasks::reorder(params, ctx).await,
         "tasks.start_session" => attempts::start_session(params, ctx).await,
         "attempts.create" => attempts::create(params, ctx).await,
@@ -188,14 +186,19 @@ fn serialize(response: Response) -> String {
 mod test_support {
     //! Shared fixtures for the handler unit tests in each submodule.
 
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
     use serde_json::json;
     use tempfile::TempDir;
+    use tokio::sync::Mutex;
     use viban_core::db::Db;
 
-    use super::{tasks, Context};
+    use super::{tasks, Context, EventSink};
 
     /// An in-memory `Context` with the default board. The returned `TempDir`s
     /// back `workspace` / `data_dir` and must be kept alive for the test.
+    /// The event sink's receiver is dropped — `emit` becomes a no-op.
     pub(super) async fn context() -> (Context, TempDir, TempDir) {
         let workspace = tempfile::tempdir().expect("workspace tempdir");
         let data_dir = tempfile::tempdir().expect("data tempdir");
@@ -203,10 +206,13 @@ mod test_support {
         db.ensure_default_board(&workspace.path().to_string_lossy())
             .await
             .expect("default board");
+        let (outbound, _outbound_rx) = tokio::sync::mpsc::unbounded_channel();
         let ctx = Context {
             workspace: workspace.path().to_path_buf(),
             data_dir: data_dir.path().to_path_buf(),
             db,
+            registry: Arc::new(Mutex::new(HashMap::new())),
+            events: EventSink::new(outbound),
         };
         (ctx, workspace, data_dir)
     }
