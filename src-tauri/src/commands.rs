@@ -148,6 +148,48 @@ pub async fn start_session(
         .map_err(|err| err.to_string())
 }
 
+/// Starts an additional attempt for a task (`attempts.create`). Returns the
+/// raw result — `{ session_id }` or `{ needs_git_init: true }`.
+#[tauri::command]
+pub async fn create_attempt(
+    task_id: String,
+    init_git: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<Value, String> {
+    let client = state.client().await.ok_or("server not connected")?;
+    client
+        .call(
+            "attempts.create",
+            json!({ "task_id": task_id, "init_git": init_git.unwrap_or(false) }),
+        )
+        .await
+        .map_err(|err| err.to_string())
+}
+
+/// Lists a task's attempts, newest first (`attempts.list`).
+#[tauri::command]
+pub async fn list_attempts(task_id: String, state: State<'_, AppState>) -> Result<Value, String> {
+    let client = state.client().await.ok_or("server not connected")?;
+    client
+        .call("attempts.list", json!({ "task_id": task_id }))
+        .await
+        .map_err(|err| err.to_string())
+}
+
+/// Makes an attempt the task's active one (`attempts.activate`).
+#[tauri::command]
+pub async fn activate_attempt(
+    attempt_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let client = state.client().await.ok_or("server not connected")?;
+    client
+        .call("attempts.activate", json!({ "attempt_id": attempt_id }))
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
 /// Lists every persisted session (`{ "sessions": [...] }`).
 #[tauri::command]
 pub async fn list_sessions(state: State<'_, AppState>) -> Result<Value, String> {

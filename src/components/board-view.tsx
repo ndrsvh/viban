@@ -169,6 +169,20 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
     setGitInitBusy(false);
   }
 
+  async function handleNewAttempt(task: Task) {
+    try {
+      const result = await invoke<StartSessionResult>("create_attempt", {
+        taskId: task.id,
+      });
+      if (result.session_id) {
+        await loadBoard();
+        onOpenSession(result.session_id);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
   async function confirmMerge() {
     const task = mergeTask;
     if (!task) return;
@@ -222,6 +236,7 @@ export function BoardView({ onOpenSession, onReview }: BoardViewProps) {
               onStartSession={handleStartSession}
               onReview={onReview}
               onMerge={(task) => setMergeTask(task)}
+              onNewAttempt={handleNewAttempt}
               onEdit={openEdit}
               onAddTask={openCreate}
             />
@@ -284,6 +299,7 @@ interface BoardColumnProps {
   onStartSession: (task: Task) => void;
   onReview: (task: Task) => void;
   onMerge: (task: Task) => void;
+  onNewAttempt: (task: Task) => void;
   onEdit: (task: Task) => void;
   onAddTask: (columnId: string) => void;
 }
@@ -297,6 +313,7 @@ function BoardColumn({
   onStartSession,
   onReview,
   onMerge,
+  onNewAttempt,
   onEdit,
   onAddTask,
 }: BoardColumnProps) {
@@ -327,6 +344,7 @@ function BoardColumn({
                 onStartSession={onStartSession}
                 onReview={onReview}
                 onMerge={onMerge}
+                onNewAttempt={onNewAttempt}
                 onEdit={onEdit}
               />
             ) : null;

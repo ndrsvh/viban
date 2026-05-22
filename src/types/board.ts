@@ -26,3 +26,13 @@ export interface Task {
   branch: string | null;
   created_at: number;
 }
+
+/** Mirror of `viban_core::types::Attempt` — one agent run of a task. */
+export interface Attempt {
+  id: string;
+  task_id: string;
+  session_id: string | null;
+  worktree_path: string | null;
+  branch: string | null;
+  created_at: number;
+}

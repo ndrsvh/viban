@@ -127,8 +127,7 @@ export default function App() {
       <div className="h-screen w-screen bg-background text-foreground">
         <DiffView
           key={reviewTask.id}
-          taskId={reviewTask.id}
-          taskTitle={reviewTask.title}
+          task={reviewTask}
           onDone={() => setReviewTask(null)}
         />
       </div>

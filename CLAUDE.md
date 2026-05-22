@@ -401,6 +401,18 @@ merge is aborted and surfaces an error, leaving the worktree intact so the
 user can resolve it manually. (This is the "merge & cleanup" deferred from
 Phase 4.)
 
+### Multiple attempts per task
+
+A task can be run by the agent more than once. Each run is an **attempt** with
+its own git worktree, branch, and session; attempts coexist so they can be
+compared. The task's `session_id` / `worktree_path` / `branch` point at the
+**active** attempt, which is what the card and the review/merge surface act
+on. `tasks.start_session` records the first attempt; `attempts.create` starts
+another (a card with a session shows a **New attempt** button);
+`attempts.activate` switches the active attempt (the **DiffView** shows a
+selector when a task has more than one). Worktrees are keyed by attempt id.
+Design and rationale: `docs/decisions/0002-multiple-attempts-per-task.md`.
+
 ## Coding conventions
 
 ### Rust

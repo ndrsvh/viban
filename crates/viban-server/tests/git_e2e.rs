@@ -5,7 +5,7 @@ mod common;
 
 use serde_json::{json, Value};
 
-use common::{worktree_path, TestServer};
+use common::TestServer;
 
 /// Creates a task, starts its session (and worktree), returns the task id.
 async fn task_with_worktree(server: &mut TestServer) -> String {
@@ -45,7 +45,7 @@ async fn git_diff_lists_pending_worktree_changes() {
     let mut server = TestServer::start().await;
     let task_id = task_with_worktree(&mut server).await;
 
-    let worktree = worktree_path(server.workspace(), &task_id);
+    let worktree = server.task_worktree(&task_id).await;
     std::fs::write(worktree.join("hello.txt"), "agent output\n").expect("write");
 
     let result = server.call("git.diff", json!({ "task_id": task_id })).await;
@@ -60,7 +60,7 @@ async fn git_diff_lists_pending_worktree_changes() {
 async fn git_commit_commits_changes_and_moves_the_task_to_review() {
     let mut server = TestServer::start().await;
     let task_id = task_with_worktree(&mut server).await;
-    let worktree = worktree_path(server.workspace(), &task_id);
+    let worktree = server.task_worktree(&task_id).await;
     std::fs::write(worktree.join("hello.txt"), "agent output\n").expect("write");
 
     server
@@ -87,7 +87,7 @@ async fn git_commit_commits_changes_and_moves_the_task_to_review() {
 async fn git_restore_discards_changes_and_moves_the_task_to_in_progress() {
     let mut server = TestServer::start().await;
     let task_id = task_with_worktree(&mut server).await;
-    let worktree = worktree_path(server.workspace(), &task_id);
+    let worktree = server.task_worktree(&task_id).await;
     std::fs::write(worktree.join("junk.txt"), "discard me\n").expect("write");
 
     server
@@ -173,14 +173,14 @@ async fn start_session_with_init_git_initializes_the_repo_and_worktree() {
         inside_work_tree.status.success(),
         "the folder became a repo"
     );
-    assert!(worktree_path(server.workspace(), &task_id).is_dir());
+    assert!(server.task_worktree(&task_id).await.is_dir());
 }
 
 #[tokio::test]
 async fn git_merge_merges_the_branch_and_finishes_the_task() {
     let mut server = TestServer::start().await;
     let task_id = task_with_worktree(&mut server).await;
-    let worktree = worktree_path(server.workspace(), &task_id);
+    let worktree = server.task_worktree(&task_id).await;
     std::fs::write(worktree.join("feature.txt"), "task output\n").expect("write");
     server
         .call("git.commit", json!({ "task_id": task_id }))
