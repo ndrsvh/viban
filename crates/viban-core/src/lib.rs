@@ -11,7 +11,7 @@ pub mod git;
 pub mod types;
 
 pub use agents::AgentEvent;
-pub use types::{Board, Column, Message, Session, Task};
+pub use types::{Attempt, Board, Column, Message, Session, Task};
 
 /// A fresh random identifier (UUID v4) — used for session, message, and task ids.
 pub fn new_id() -> String {

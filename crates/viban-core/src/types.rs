@@ -68,6 +68,19 @@ pub struct Task {
     pub created_at: i64,
 }
 
+/// One agent run of a task, with its own session, worktree, and branch. A
+/// task may have several attempts; the task's own `session_id` /
+/// `worktree_path` / `branch` point at the currently active one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Attempt {
+    pub id: String,
+    pub task_id: String,
+    pub session_id: Option<String>,
+    pub worktree_path: Option<String>,
+    pub branch: Option<String>,
+    pub created_at: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

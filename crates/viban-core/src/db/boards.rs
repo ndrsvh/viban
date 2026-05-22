@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use tokio_rusqlite::rusqlite::{self, params, OptionalExtension};
 
 use super::Db;
-use crate::types::{Board, Column, Task};
+use crate::types::{Attempt, Board, Column, Task};
 
 /// The default columns created with a fresh board.
 const DEFAULT_COLUMNS: [&str; 4] = ["Backlog", "In Progress", "Review", "Done"];
@@ -226,6 +226,63 @@ impl Db {
             .context("failed to reorder column")?;
         Ok(())
     }
+
+    /// Inserts a new attempt for a task.
+    pub async fn create_attempt(&self, attempt: Attempt) -> Result<()> {
+        self.conn
+            .call(move |conn| -> rusqlite::Result<()> {
+                conn.execute(
+                    "INSERT INTO attempts \
+                     (id, task_id, session_id, worktree_path, branch, created_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        attempt.id,
+                        attempt.task_id,
+                        attempt.session_id,
+                        attempt.worktree_path,
+                        attempt.branch,
+                        attempt.created_at,
+                    ],
+                )?;
+                Ok(())
+            })
+            .await
+            .context("failed to create attempt")?;
+        Ok(())
+    }
+
+    /// Lists a task's attempts, newest first.
+    pub async fn list_attempts(&self, task_id: String) -> Result<Vec<Attempt>> {
+        self.conn
+            .call(move |conn| -> rusqlite::Result<Vec<Attempt>> {
+                let mut stmt = conn.prepare(
+                    "SELECT id, task_id, session_id, worktree_path, branch, created_at \
+                     FROM attempts WHERE task_id = ?1 ORDER BY created_at DESC, id",
+                )?;
+                let rows = stmt
+                    .query_map(params![task_id], row_to_attempt)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await
+            .context("failed to list attempts")
+    }
+
+    /// Fetches a single attempt by id.
+    pub async fn get_attempt(&self, attempt_id: String) -> Result<Option<Attempt>> {
+        self.conn
+            .call(move |conn| -> rusqlite::Result<Option<Attempt>> {
+                conn.query_row(
+                    "SELECT id, task_id, session_id, worktree_path, branch, created_at \
+                     FROM attempts WHERE id = ?1",
+                    params![attempt_id],
+                    row_to_attempt,
+                )
+                .optional()
+            })
+            .await
+            .context("failed to get attempt")
+    }
 }
 
 fn default_board_name(project_path: &str) -> String {
@@ -265,6 +322,17 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         worktree_path: row.get(6)?,
         branch: row.get(7)?,
         created_at: row.get(8)?,
+    })
+}
+
+fn row_to_attempt(row: &rusqlite::Row<'_>) -> rusqlite::Result<Attempt> {
+    Ok(Attempt {
+        id: row.get(0)?,
+        task_id: row.get(1)?,
+        session_id: row.get(2)?,
+        worktree_path: row.get(3)?,
+        branch: row.get(4)?,
+        created_at: row.get(5)?,
     })
 }
 
@@ -449,5 +517,68 @@ mod tests {
             .await
             .expect("get_task")
             .is_none());
+    }
+
+    fn attempt(id: &str, task_id: &str, created_at: i64) -> Attempt {
+        Attempt {
+            id: id.to_string(),
+            task_id: task_id.to_string(),
+            session_id: Some(format!("session-{id}")),
+            worktree_path: Some(format!("/wt/{id}")),
+            branch: Some(format!("viban/x-{id}")),
+            created_at,
+        }
+    }
+
+    #[tokio::test]
+    async fn attempts_create_list_and_get() {
+        let db = Db::open_in_memory().await.expect("open");
+        let board = db.ensure_default_board("/tmp/proj").await.expect("board");
+        let columns = db.list_columns(board.id.clone()).await.expect("columns");
+        db.create_task(Task {
+            id: "t1".into(),
+            column_id: columns[0].id.clone(),
+            title: "Task".into(),
+            description: String::new(),
+            position: 0,
+            session_id: None,
+            worktree_path: None,
+            branch: None,
+            created_at: 0,
+        })
+        .await
+        .expect("create task");
+
+        db.create_attempt(attempt("a1", "t1", 10))
+            .await
+            .expect("create a1");
+        db.create_attempt(attempt("a2", "t1", 20))
+            .await
+            .expect("create a2");
+
+        let attempts = db.list_attempts("t1".into()).await.expect("list");
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0].id, "a2", "newest attempt first");
+        assert_eq!(attempts[1].id, "a1");
+
+        let fetched = db
+            .get_attempt("a1".into())
+            .await
+            .expect("get_attempt")
+            .expect("attempt exists");
+        assert_eq!(fetched.task_id, "t1");
+        assert_eq!(fetched.session_id.as_deref(), Some("session-a1"));
+        assert_eq!(fetched.branch.as_deref(), Some("viban/x-a1"));
+
+        assert!(db
+            .get_attempt("missing".into())
+            .await
+            .expect("get_attempt")
+            .is_none());
+        assert!(db
+            .list_attempts("other".into())
+            .await
+            .expect("list")
+            .is_empty());
     }
 }

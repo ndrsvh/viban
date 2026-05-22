@@ -59,6 +59,27 @@ ALTER TABLE tasks ADD COLUMN worktree_path TEXT;
 ALTER TABLE tasks ADD COLUMN branch TEXT;
 ";
 
+/// Migration 4 — attempts: a task may have several agent runs, each with its
+/// own session, worktree, and branch. Existing worktree-backed tasks are
+/// backfilled with one attempt copying their current fields.
+pub const MIGRATION_4: &str = "
+CREATE TABLE attempts (
+    id            TEXT PRIMARY KEY,
+    task_id       TEXT NOT NULL REFERENCES tasks(id),
+    session_id    TEXT,
+    worktree_path TEXT,
+    branch        TEXT,
+    created_at    INTEGER NOT NULL
+);
+
+CREATE INDEX idx_attempts_task ON attempts (task_id, created_at);
+
+INSERT INTO attempts (id, task_id, session_id, worktree_path, branch, created_at)
+SELECT lower(hex(randomblob(16))), id, session_id, worktree_path, branch, created_at
+FROM tasks
+WHERE session_id IS NOT NULL;
+";
+
 /// Every migration, in application order. A migration's version is its
 /// 1-based index in this list.
-pub const MIGRATIONS: &[&str] = &[MIGRATION_1, MIGRATION_2, MIGRATION_3];
+pub const MIGRATIONS: &[&str] = &[MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4];
