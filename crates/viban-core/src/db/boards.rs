@@ -94,7 +94,7 @@ impl Db {
             .call(move |conn| -> rusqlite::Result<Vec<Task>> {
                 let mut stmt = conn.prepare(
                     "SELECT t.id, t.column_id, t.title, t.description, t.position, \
-                            t.session_id, t.created_at \
+                            t.session_id, t.worktree_path, t.branch, t.created_at \
                      FROM tasks t JOIN columns c ON t.column_id = c.id \
                      WHERE c.board_id = ?1 ORDER BY t.column_id, t.position",
                 )?;
@@ -112,7 +112,8 @@ impl Db {
         self.conn
             .call(move |conn| -> rusqlite::Result<Option<Task>> {
                 conn.query_row(
-                    "SELECT id, column_id, title, description, position, session_id, created_at \
+                    "SELECT id, column_id, title, description, position, session_id, \
+                            worktree_path, branch, created_at \
                      FROM tasks WHERE id = ?1",
                     params![task_id],
                     row_to_task,
@@ -123,14 +124,32 @@ impl Db {
             .context("failed to get task")
     }
 
+    /// Fetches the task linked to a given session, if any.
+    pub async fn get_task_by_session(&self, session_id: String) -> Result<Option<Task>> {
+        self.conn
+            .call(move |conn| -> rusqlite::Result<Option<Task>> {
+                conn.query_row(
+                    "SELECT id, column_id, title, description, position, session_id, \
+                            worktree_path, branch, created_at \
+                     FROM tasks WHERE session_id = ?1",
+                    params![session_id],
+                    row_to_task,
+                )
+                .optional()
+            })
+            .await
+            .context("failed to get task by session")
+    }
+
     /// Inserts a new task.
     pub async fn create_task(&self, task: Task) -> Result<()> {
         self.conn
             .call(move |conn| -> rusqlite::Result<()> {
                 conn.execute(
                     "INSERT INTO tasks \
-                     (id, column_id, title, description, position, session_id, created_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                     (id, column_id, title, description, position, session_id, \
+                      worktree_path, branch, created_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                     params![
                         task.id,
                         task.column_id,
@@ -138,6 +157,8 @@ impl Db {
                         task.description,
                         task.position,
                         task.session_id,
+                        task.worktree_path,
+                        task.branch,
                         task.created_at,
                     ],
                 )?;
@@ -154,7 +175,8 @@ impl Db {
             .call(move |conn| -> rusqlite::Result<()> {
                 conn.execute(
                     "UPDATE tasks SET column_id = ?2, title = ?3, description = ?4, \
-                     position = ?5, session_id = ?6 WHERE id = ?1",
+                     position = ?5, session_id = ?6, worktree_path = ?7, branch = ?8 \
+                     WHERE id = ?1",
                     params![
                         task.id,
                         task.column_id,
@@ -162,6 +184,8 @@ impl Db {
                         task.description,
                         task.position,
                         task.session_id,
+                        task.worktree_path,
+                        task.branch,
                     ],
                 )?;
                 Ok(())
@@ -238,7 +262,9 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         description: row.get(3)?,
         position: row.get(4)?,
         session_id: row.get(5)?,
-        created_at: row.get(6)?,
+        worktree_path: row.get(6)?,
+        branch: row.get(7)?,
+        created_at: row.get(8)?,
     })
 }
 
@@ -275,6 +301,8 @@ mod tests {
                 description: String::new(),
                 position: index as i64,
                 session_id: None,
+                worktree_path: None,
+                branch: None,
                 created_at: 0,
             })
             .await
