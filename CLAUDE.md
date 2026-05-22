@@ -456,6 +456,36 @@ directly in the project folder: the attempt carries no `worktree_path` or
 `attempts.create` follows the task's mode automatically (worktree when the
 project is a ready repository, otherwise a plain in-folder session).
 
+### Live task status
+
+Each task card shows the live state of its agent so the board is a real
+dashboard — at a glance you see what is working, what is finished, and what
+broke, without opening every chat.
+
+`AgentStatus` (in `viban-core`) has three states, derived from the agent's
+event stream:
+
+- **`running`** — the agent is processing (an amber, pulsing dot).
+- **`done`** — the agent finished its turn; ready for the user (a green dot).
+- **`failed`** — the last turn errored, or the agent itself errored (a red
+  dot).
+
+A task with no session, or whose agent has not emitted anything yet, shows no
+dot. Status is **live, not persisted** — it is held in memory per connection
+and reflects only currently/recently running agents; a fresh server starts
+with everything blank.
+
+The server tracks status in the per-connection `Context` (keyed by task id).
+The agent event pump maps `AgentEvent`s to transitions and pushes a
+`TaskStatusUpdate { task_id, status }` on the **`tasks`** notification topic
+(see "Streaming events"). `boards.get` includes a `statuses` map so a fresh
+board load is accurate. The board view subscribes to the `tasks` topic for
+the duration it is shown; the store applies updates, and a finished or failed
+agent also raises a toast.
+
+OS-level notifications (reaching the user when the window is unfocused) are a
+deliberate later addition — the in-app dot and toast come first.
+
 ## Coding conventions
 
 ### Rust
