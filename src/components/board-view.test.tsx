@@ -91,7 +91,7 @@ describe("BoardView", () => {
     const onOpenSession = vi.fn();
     boardWith([makeTask()], (command) => {
       if (command === "start_session") {
-        return Promise.resolve("session-xyz");
+        return Promise.resolve({ session_id: "session-xyz" });
       }
       return Promise.resolve();
     });
@@ -105,6 +105,40 @@ describe("BoardView", () => {
     );
     expect(invokeMock).toHaveBeenCalledWith("start_session", {
       taskId: "t1",
+      initGit: false,
     });
+  });
+
+  it("confirms git initialization when the folder is not a repo", async () => {
+    const user = userEvent.setup();
+    const onOpenSession = vi.fn();
+    let confirmedWithInit = false;
+    boardWith([makeTask()], (command, args) => {
+      if (command === "start_session") {
+        if (args?.initGit === true) {
+          confirmedWithInit = true;
+          return Promise.resolve({ session_id: "session-after-init" });
+        }
+        return Promise.resolve({ needs_git_init: true });
+      }
+      return Promise.resolve();
+    });
+    render(<BoardView onOpenSession={onOpenSession} onReview={vi.fn()} />);
+
+    await screen.findByText("Write tests");
+    await user.click(screen.getByRole("button", { name: "Start session" }));
+
+    // The confirmation dialog appears instead of starting immediately.
+    expect(
+      await screen.findByText("Initialize a git repository?"),
+    ).toBeInTheDocument();
+    expect(onOpenSession).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Initialize git" }));
+
+    await waitFor(() =>
+      expect(onOpenSession).toHaveBeenCalledWith("session-after-init"),
+    );
+    expect(confirmedWithInit).toBe(true);
   });
 });

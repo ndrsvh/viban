@@ -113,6 +113,70 @@ async fn git_restore_discards_changes_and_moves_the_task_to_in_progress() {
 }
 
 #[tokio::test]
+async fn start_session_requests_git_init_for_a_non_repo_folder() {
+    let mut server = TestServer::start_without_git().await;
+    let column_id = server.first_column_id().await;
+    let created = server
+        .call(
+            "tasks.create",
+            json!({ "column_id": column_id, "title": "First task" }),
+        )
+        .await;
+    let task_id = created["task"]["id"]
+        .as_str()
+        .expect("a task id")
+        .to_string();
+
+    let result = server
+        .call("tasks.start_session", json!({ "task_id": task_id }))
+        .await;
+    assert_eq!(result["needs_git_init"], true);
+    assert!(
+        result["session_id"].is_null(),
+        "no session is created until git is confirmed"
+    );
+}
+
+#[tokio::test]
+async fn start_session_with_init_git_initializes_the_repo_and_worktree() {
+    let mut server = TestServer::start_without_git().await;
+    let column_id = server.first_column_id().await;
+    let created = server
+        .call(
+            "tasks.create",
+            json!({ "column_id": column_id, "title": "First task" }),
+        )
+        .await;
+    let task_id = created["task"]["id"]
+        .as_str()
+        .expect("a task id")
+        .to_string();
+
+    let result = server
+        .call(
+            "tasks.start_session",
+            json!({ "task_id": task_id, "init_git": true }),
+        )
+        .await;
+    assert!(
+        result["session_id"].as_str().is_some(),
+        "a session is created once git is initialized"
+    );
+
+    // The folder is now a git repo and the task's worktree exists.
+    let inside_work_tree = std::process::Command::new("git")
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .current_dir(server.workspace())
+        .output()
+        .expect("git rev-parse");
+    assert!(
+        inside_work_tree.status.success(),
+        "the folder became a repo"
+    );
+    assert!(worktree_path(server.workspace(), &task_id).is_dir());
+}
+
+#[tokio::test]
 async fn git_diff_on_a_task_without_a_worktree_errors() {
     let mut server = TestServer::start().await;
     let board_column = server.first_column_id().await;

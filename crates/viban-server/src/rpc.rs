@@ -398,9 +398,17 @@ async fn tasks_delete(
 }
 
 /// Creates a git worktree + branch for a task and links a fresh session to it.
+///
 /// Idempotent: a task that already has a session returns its existing id.
+/// When the project folder is not yet a git repository, this returns
+/// `{ "needs_git_init": true }` unless the caller passes `init_git: true`, in
+/// which case the folder is initialized first.
 async fn tasks_start_session(params: Value, ctx: &Context) -> Result<Value, RpcError> {
     let task_id = str_param(&params, "task_id")?.to_string();
+    let init_git = params
+        .get("init_git")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let mut task = ctx
         .db
         .get_task(task_id.clone())
@@ -410,6 +418,18 @@ async fn tasks_start_session(params: Value, ctx: &Context) -> Result<Value, RpcE
 
     if let Some(session_id) = &task.session_id {
         return Ok(json!({ "session_id": session_id }));
+    }
+
+    // A worktree needs a git repository with at least one commit. If the
+    // project folder is not one yet, ask the caller to confirm initializing it.
+    let repo_ready = git::is_git_repo(&ctx.workspace).await && git::has_head(&ctx.workspace).await;
+    if !repo_ready {
+        if !init_git {
+            return Ok(json!({ "needs_git_init": true }));
+        }
+        git::prepare_repo(&ctx.workspace)
+            .await
+            .map_err(|err| RpcError::internal(format!("failed to initialize git: {err}")))?;
     }
 
     let id_fragment: String = task_id.chars().take(8).collect();

@@ -251,3 +251,77 @@ async fn discard_all_restores_tracked_and_removes_untracked_files() {
         "untracked files are removed"
     );
 }
+
+#[tokio::test]
+async fn has_head_reflects_whether_the_repo_has_commits() {
+    let empty = tempfile::tempdir().expect("tempdir");
+    run_git(empty.path(), &["init"]);
+    assert!(
+        !git::has_head(empty.path()).await,
+        "a freshly initialized repo has no HEAD"
+    );
+
+    let committed = tempfile::tempdir().expect("tempdir");
+    init_repo(committed.path());
+    assert!(
+        git::has_head(committed.path()).await,
+        "a repo with a commit has a HEAD"
+    );
+}
+
+#[tokio::test]
+async fn prepare_repo_initializes_a_plain_folder() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("code.txt"), "hello\n").expect("write");
+    assert!(!git::is_git_repo(dir.path()).await);
+
+    git::prepare_repo(dir.path()).await.expect("prepare");
+
+    assert!(
+        git::is_git_repo(dir.path()).await,
+        "the folder is now a repo"
+    );
+    assert!(git::has_head(dir.path()).await, "with an initial commit");
+    let gitignore = std::fs::read_to_string(dir.path().join(".gitignore")).unwrap_or_default();
+    assert!(
+        gitignore.lines().any(|line| line.trim() == ".viban/"),
+        ".viban/ is gitignored before the initial commit"
+    );
+}
+
+#[tokio::test]
+async fn prepare_repo_commits_an_empty_repository() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    run_git(dir.path(), &["init"]);
+    std::fs::write(dir.path().join("code.txt"), "hello\n").expect("write");
+    assert!(!git::has_head(dir.path()).await);
+
+    git::prepare_repo(dir.path()).await.expect("prepare");
+    assert!(
+        git::has_head(dir.path()).await,
+        "an initial commit was made"
+    );
+}
+
+#[tokio::test]
+async fn prepare_repo_is_a_noop_for_a_ready_repository() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    let head_before = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(dir.path())
+        .output()
+        .expect("rev-parse");
+
+    git::prepare_repo(dir.path()).await.expect("prepare");
+
+    let head_after = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(dir.path())
+        .output()
+        .expect("rev-parse");
+    assert_eq!(
+        head_before.stdout, head_after.stdout,
+        "a ready repo gets no new commit"
+    );
+}
