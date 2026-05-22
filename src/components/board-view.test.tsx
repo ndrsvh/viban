@@ -109,6 +109,37 @@ describe("BoardView", () => {
     });
   });
 
+  it("starts a new attempt for a task with a session", async () => {
+    const user = userEvent.setup();
+    const onOpenSession = vi.fn();
+    boardWith(
+      [
+        makeTask({
+          session_id: "s1",
+          worktree_path: "/repo/.viban/worktrees/a1",
+          branch: "viban/write-tests-a1",
+        }),
+      ],
+      (command) => {
+        if (command === "create_attempt") {
+          return Promise.resolve({ session_id: "attempt-2" });
+        }
+        return Promise.resolve();
+      },
+    );
+    render(<BoardView onOpenSession={onOpenSession} onReview={vi.fn()} />);
+
+    await screen.findByText("Write tests");
+    await user.click(screen.getByRole("button", { name: "New attempt" }));
+
+    await waitFor(() =>
+      expect(onOpenSession).toHaveBeenCalledWith("attempt-2"),
+    );
+    expect(invokeMock).toHaveBeenCalledWith("create_attempt", {
+      taskId: "t1",
+    });
+  });
+
   it("merges a task after confirmation", async () => {
     const user = userEvent.setup();
     let mergedTaskId: unknown;

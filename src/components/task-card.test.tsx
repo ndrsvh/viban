@@ -41,6 +41,7 @@ interface Handlers {
   onStartSession: (task: Task) => void;
   onReview: (task: Task) => void;
   onMerge: (task: Task) => void;
+  onNewAttempt: (task: Task) => void;
   onEdit: (task: Task) => void;
 }
 
@@ -50,6 +51,7 @@ function renderCard(task: Task, handlers: Partial<Handlers> = {}) {
     onStartSession: handlers.onStartSession ?? vi.fn(),
     onReview: handlers.onReview ?? vi.fn(),
     onMerge: handlers.onMerge ?? vi.fn(),
+    onNewAttempt: handlers.onNewAttempt ?? vi.fn(),
     onEdit: handlers.onEdit ?? vi.fn(),
   };
   render(
@@ -129,6 +131,21 @@ describe("TaskCard", () => {
     renderCard(task, { onReview });
     await user.click(screen.getByRole("button", { name: "Review" }));
     expect(onReview).toHaveBeenCalledWith(task);
+  });
+
+  it("offers New attempt only once the task has a session", async () => {
+    const user = userEvent.setup();
+
+    renderCard(makeTask());
+    expect(
+      screen.queryByRole("button", { name: "New attempt" }),
+    ).not.toBeInTheDocument();
+
+    const onNewAttempt = vi.fn();
+    const task = makeTask({ session_id: "sess-1" });
+    renderCard(task, { onNewAttempt });
+    await user.click(screen.getByRole("button", { name: "New attempt" }));
+    expect(onNewAttempt).toHaveBeenCalledWith(task);
   });
 
   it("offers Merge only once the task has a branch", async () => {

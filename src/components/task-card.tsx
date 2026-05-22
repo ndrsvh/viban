@@ -11,6 +11,7 @@ interface TaskCardProps {
   onStartSession: (task: Task) => void;
   onReview: (task: Task) => void;
   onMerge: (task: Task) => void;
+  onNewAttempt: (task: Task) => void;
   onEdit: (task: Task) => void;
 }
 
@@ -21,6 +22,7 @@ export function TaskCard({
   onStartSession,
   onReview,
   onMerge,
+  onNewAttempt,
   onEdit,
 }: TaskCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
@@ -75,6 +77,15 @@ export function TaskCard({
         {task.branch && (
           <Button size="xs" variant="secondary" onClick={() => onMerge(task)}>
             Merge
+          </Button>
+        )}
+        {sessionId && (
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() => onNewAttempt(task)}
+          >
+            New attempt
           </Button>
         )}
         <Button size="xs" variant="ghost" onClick={() => onEdit(task)}>
