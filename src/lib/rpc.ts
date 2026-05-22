@@ -52,9 +52,10 @@ export const rpc = {
     invoke<null>("send_message", { sessionId, prompt }),
   listSessions: () => invoke<{ sessions: Session[] }>("list_sessions"),
   getSession: (sessionId: string) =>
-    invoke<{ session: Session; messages: Message[] }>("get_session", {
-      sessionId,
-    }),
+    invoke<{ session: Session; messages: Message[]; files: string[] }>(
+      "get_session",
+      { sessionId },
+    ),
 
   // -- board / tasks --------------------------------------------------------
   getBoard: () => invoke<BoardSnapshot>("get_board"),
