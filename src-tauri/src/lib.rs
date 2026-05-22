@@ -44,6 +44,12 @@ impl AppState {
 const INITIAL_BACKOFF: Duration = Duration::from_millis(500);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 
+/// The next restart delay after a failed/lost sidecar: double the current
+/// one, capped at `MAX_BACKOFF`.
+fn next_backoff(current: Duration) -> Duration {
+    (current * 2).min(MAX_BACKOFF)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
@@ -170,7 +176,7 @@ async fn supervise_sidecar(app: AppHandle) {
             return;
         }
         tokio::time::sleep(backoff).await;
-        backoff = (backoff * 2).min(MAX_BACKOFF);
+        backoff = next_backoff(backoff);
     }
 }
 
@@ -188,4 +194,31 @@ async fn start_sidecar(app: &AppHandle, workspace: &str) -> anyhow::Result<onesh
     *app.state::<AppState>().client.lock().await = Some(Arc::new(client));
     tracing::info!(port, "connected to viban-server");
     Ok(sidecar.exited)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{next_backoff, INITIAL_BACKOFF, MAX_BACKOFF};
+    use std::time::Duration;
+
+    #[test]
+    fn backoff_doubles_each_step() {
+        let first = next_backoff(INITIAL_BACKOFF);
+        assert_eq!(first, Duration::from_secs(1));
+        assert_eq!(next_backoff(first), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn backoff_is_capped_at_the_maximum() {
+        let mut backoff = INITIAL_BACKOFF;
+        for _ in 0..20 {
+            backoff = next_backoff(backoff);
+        }
+        assert_eq!(backoff, MAX_BACKOFF, "backoff settles at the cap");
+        assert_eq!(
+            next_backoff(MAX_BACKOFF),
+            MAX_BACKOFF,
+            "and never exceeds it"
+        );
+    }
 }
