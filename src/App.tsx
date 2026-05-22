@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 import { BoardView } from "@/components/board-view";
@@ -11,11 +11,28 @@ type Status = "connecting" | "ready" | "reconnecting";
 // The server is polled continuously so the UI reflects sidecar restarts.
 const POLL_INTERVAL_MS = 1500;
 
+/** The last path segment of a project path, for display. */
+function projectName(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] ?? path;
+}
+
 export default function App() {
+  // `undefined` while still loading; `null` when no project is chosen.
+  const [project, setProject] = useState<string | null | undefined>(undefined);
   const [status, setStatus] = useState<Status>("connecting");
   const [activeSession, setActiveSession] = useState<string | null>(null);
 
   useEffect(() => {
+    void invoke<string | null>("current_project")
+      .then((path) => setProject(path))
+      .catch(() => setProject(null));
+  }, []);
+
+  // Poll the server's health, but only once a project is open — without one
+  // the sidecar idles and there is nothing to connect to.
+  useEffect(() => {
+    if (!project) return;
     let cancelled = false;
     let failures = 0;
     let everConnected = false;
@@ -42,7 +59,42 @@ export default function App() {
       cancelled = true;
       clearInterval(timer);
     };
+  }, [project]);
+
+  const handleOpenProject = useCallback(async () => {
+    try {
+      const path = await invoke<string | null>("open_project");
+      if (path) {
+        setActiveSession(null);
+        setStatus("connecting");
+        setProject(path);
+      }
+    } catch (err) {
+      console.error(err);
+    }
   }, []);
+
+  if (project === undefined) {
+    return (
+      <main className="flex h-screen w-screen items-center justify-center bg-background text-foreground">
+        <h1 className="text-2xl font-medium tracking-tight">viban</h1>
+      </main>
+    );
+  }
+
+  if (project === null) {
+    return (
+      <main className="flex h-screen w-screen flex-col items-center justify-center gap-4 bg-background text-foreground">
+        <div className="flex flex-col items-center gap-1">
+          <h1 className="text-2xl font-medium tracking-tight">viban</h1>
+          <p className="text-sm text-muted-foreground">
+            Open a git repository to start.
+          </p>
+        </div>
+        <Button onClick={() => void handleOpenProject()}>Open project…</Button>
+      </main>
+    );
+  }
 
   if (status !== "ready") {
     return (
@@ -81,8 +133,20 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen w-screen bg-background text-foreground">
-      <BoardView onOpenSession={setActiveSession} />
+    <div className="flex h-screen w-screen flex-col bg-background text-foreground">
+      <header className="flex items-center justify-between border-b px-3 py-1.5">
+        <h1 className="text-sm font-medium">{projectName(project)}</h1>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => void handleOpenProject()}
+        >
+          Switch project
+        </Button>
+      </header>
+      <div className="flex-1 overflow-hidden">
+        <BoardView key={project} onOpenSession={setActiveSession} />
+      </div>
     </div>
   );
 }

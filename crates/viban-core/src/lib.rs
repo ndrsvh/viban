@@ -7,6 +7,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod agents;
 pub mod db;
+pub mod git;
 pub mod types;
 
 pub use agents::AgentEvent;

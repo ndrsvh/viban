@@ -5,6 +5,7 @@
 
 mod client;
 mod commands;
+mod project;
 mod sidecar;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,17 +14,23 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Manager, RunEvent};
 use tauri_plugin_shell::process::CommandChild;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{oneshot, Mutex, Notify};
 
 use client::Client;
 
-/// Shared application state: the JSON-RPC client, the sidecar handle, and a
-/// flag that tells the supervisor to stop restarting once the app is exiting.
+/// Shared application state: the JSON-RPC client, the sidecar handle, the
+/// selected project, and a flag that tells the supervisor to stop restarting
+/// once the app is exiting.
 #[derive(Default)]
 pub struct AppState {
     client: Mutex<Option<Arc<Client>>>,
     sidecar: Mutex<Option<CommandChild>>,
     shutting_down: AtomicBool,
+    /// Filesystem path of the open project, or `None` when none is selected.
+    project: Mutex<Option<String>>,
+    /// Pulsed when the project changes (or the app exits) to wake the
+    /// sidecar supervisor.
+    project_changed: Notify,
 }
 
 impl AppState {
@@ -48,13 +55,17 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
+            commands::current_project,
+            commands::open_project,
             commands::server_health,
             commands::open_session,
             commands::close_session,
             commands::spawn_session,
             commands::send_message,
+            commands::start_session,
             commands::list_sessions,
             commands::get_session,
             commands::get_board,
@@ -72,11 +83,12 @@ pub fn run() {
         .expect("error while building viban")
         .run(|app, event| {
             if let RunEvent::ExitRequested { .. } = event {
-                app.state::<AppState>()
-                    .shutting_down
-                    .store(true, Ordering::Relaxed);
-                let child = app
-                    .state::<AppState>()
+                let state = app.state::<AppState>();
+                state.shutting_down.store(true, Ordering::Relaxed);
+                // Wake the supervisor so it observes the shutdown flag and
+                // stops, even when it is idle waiting for a project.
+                state.project_changed.notify_one();
+                let child = state
                     .sidecar
                     .try_lock()
                     .ok()
@@ -90,43 +102,64 @@ pub fn run() {
         });
 }
 
-/// Keeps a `viban-server` running: connects, waits for it to die, and restarts
-/// it with exponential backoff until the app shuts down.
+/// Keeps a `viban-server` running for the open project: connects, waits for
+/// the process to die or the project to change, and restarts it with
+/// exponential backoff until the app shuts down. With no project selected the
+/// supervisor idles until one is opened.
 async fn supervise_sidecar(app: AppHandle) {
-    let workspace = match std::env::current_dir() {
-        Ok(dir) => dir.to_string_lossy().into_owned(),
-        Err(err) => {
-            tracing::error!(%err, "cannot determine workspace directory");
-            return;
-        }
-    };
+    // Restore the project remembered from the last launch, if any.
+    if let Some(path) = project::load(&app) {
+        *app.state::<AppState>().project.lock().await = Some(path);
+    }
 
     let mut backoff = INITIAL_BACKOFF;
     loop {
-        if app
-            .state::<AppState>()
-            .shutting_down
-            .load(Ordering::Relaxed)
-        {
+        let state = app.state::<AppState>();
+        if state.shutting_down.load(Ordering::Relaxed) {
             return;
         }
 
-        match start_sidecar(&app, &workspace).await {
+        let project = state.project.lock().await.clone();
+        let Some(project) = project else {
+            // No project: idle until one is opened (or the app exits).
+            state.project_changed.notified().await;
+            backoff = INITIAL_BACKOFF;
+            continue;
+        };
+
+        match start_sidecar(&app, &project).await {
             Ok(exited) => {
                 backoff = INITIAL_BACKOFF;
-                // Block until the sidecar process dies.
-                let _ = exited.await;
+                // Run until the sidecar dies or the project is switched.
+                let switched = tokio::select! {
+                    _ = exited => false,
+                    _ = state.project_changed.notified() => true,
+                };
+
+                *state.client.lock().await = None;
+                let child = state.sidecar.lock().await.take();
+                if let Some(child) = child {
+                    if let Err(err) = child.kill() {
+                        tracing::warn!(%err, "failed to kill viban-server");
+                    }
+                }
+
+                // The exit handler pulses `project_changed` too; when the app
+                // is shutting down, stop quietly instead of reporting a
+                // restart that will never happen.
+                if state.shutting_down.load(Ordering::Relaxed) {
+                    return;
+                }
+                if switched {
+                    tracing::info!("project changed; restarting viban-server");
+                    continue;
+                }
                 tracing::warn!("viban-server connection lost");
-                *app.state::<AppState>().client.lock().await = None;
             }
             Err(err) => tracing::error!(%err, "failed to start viban-server"),
         }
 
-        if app
-            .state::<AppState>()
-            .shutting_down
-            .load(Ordering::Relaxed)
-        {
+        if state.shutting_down.load(Ordering::Relaxed) {
             return;
         }
         tokio::time::sleep(backoff).await;

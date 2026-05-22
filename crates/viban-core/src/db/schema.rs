@@ -53,6 +53,12 @@ CREATE INDEX idx_columns_board ON columns (board_id, position);
 CREATE INDEX idx_tasks_column ON tasks (column_id, position);
 ";
 
+/// Migration 3 — per-task git worktree: where each task's agent runs.
+pub const MIGRATION_3: &str = "
+ALTER TABLE tasks ADD COLUMN worktree_path TEXT;
+ALTER TABLE tasks ADD COLUMN branch TEXT;
+";
+
 /// Every migration, in application order. A migration's version is its
 /// 1-based index in this list.
-pub const MIGRATIONS: &[&str] = &[MIGRATION_1, MIGRATION_2];
+pub const MIGRATIONS: &[&str] = &[MIGRATION_1, MIGRATION_2, MIGRATION_3];

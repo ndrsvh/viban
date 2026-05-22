@@ -61,5 +61,9 @@ pub struct Task {
     pub position: i64,
     /// The viban session started from this task, if any.
     pub session_id: Option<String>,
+    /// Filesystem path of the task's git worktree, once a session has started.
+    pub worktree_path: Option<String>,
+    /// The git branch the task's worktree is on.
+    pub branch: Option<String>,
     pub created_at: i64,
 }

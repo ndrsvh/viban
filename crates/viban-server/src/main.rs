@@ -51,6 +51,14 @@ async fn main() -> Result<()> {
         .await
         .context("failed to ensure the default board")?;
 
+    // Keep the project repo clean: viban's worktrees and database live under
+    // `.viban/`, which should never be committed to the user's project.
+    if viban_core::git::is_git_repo(&args.workspace).await {
+        if let Err(err) = viban_core::git::ensure_gitignored(&args.workspace, ".viban/").await {
+            tracing::warn!(%err, "failed to update .gitignore");
+        }
+    }
+
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", args.port))
         .await
         .with_context(|| format!("failed to bind 127.0.0.1:{}", args.port))?;
