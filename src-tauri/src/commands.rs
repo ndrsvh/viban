@@ -3,10 +3,52 @@
 
 use serde_json::{json, Value};
 use tauri::ipc::Channel;
-use tauri::State;
+use tauri::{AppHandle, State};
+use tauri_plugin_dialog::DialogExt;
+use tokio::sync::oneshot;
 use viban_core::AgentEvent;
 
 use crate::AppState;
+
+/// Returns the path of the currently open project, or `None` if none is set.
+#[tauri::command]
+pub async fn current_project(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    Ok(state.project.lock().await.clone())
+}
+
+/// Opens a native folder dialog, verifies the chosen folder is a git
+/// repository, persists it as the project, and restarts the sidecar against
+/// it. Returns the chosen path, or `None` if the user cancelled.
+#[tauri::command]
+pub async fn open_project(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let (tx, rx) = oneshot::channel();
+    app.dialog().file().pick_folder(move |folder| {
+        let _ = tx.send(folder);
+    });
+    let folder = rx
+        .await
+        .map_err(|_| "folder dialog closed unexpectedly".to_string())?;
+    let Some(folder) = folder else {
+        return Ok(None);
+    };
+    let path = folder
+        .into_path()
+        .map_err(|err| format!("invalid folder path: {err}"))?;
+    if !path.join(".git").exists() {
+        return Err("the selected folder is not a git repository".to_string());
+    }
+
+    let path_str = path.to_string_lossy().into_owned();
+    crate::project::save(&app, &path_str).map_err(|err| err.to_string())?;
+    *state.project.lock().await = Some(path_str.clone());
+    // Wake the supervisor so it tears down the old sidecar and starts a new
+    // one against this project.
+    state.project_changed.notify_one();
+    Ok(Some(path_str))
+}
 
 /// Returns viban-server's health report (`server.health`).
 #[tauri::command]
