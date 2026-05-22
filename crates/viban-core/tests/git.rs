@@ -23,6 +23,8 @@ fn init_repo(dir: &Path) {
     run_git(dir, &["init"]);
     run_git(dir, &["config", "user.email", "test@viban.dev"]);
     run_git(dir, &["config", "user.name", "viban test"]);
+    // Keep line endings byte-stable across platforms.
+    run_git(dir, &["config", "core.autocrlf", "false"]);
     std::fs::write(dir.join("file.txt"), "content\n").expect("write file");
     run_git(dir, &["add", "."]);
     run_git(dir, &["commit", "-m", "initial"]);
@@ -146,4 +148,106 @@ async fn worktree_remove_without_force_fails_on_uncommitted_changes() {
         .await
         .expect("forced removal");
     assert!(!worktree.exists());
+}
+
+#[tokio::test]
+async fn worktree_diff_reports_modified_added_and_deleted_files() {
+    let repo = tempfile::tempdir().expect("tempdir");
+    let root = repo.path();
+    run_git(root, &["init"]);
+    run_git(root, &["config", "user.email", "test@viban.dev"]);
+    run_git(root, &["config", "user.name", "viban test"]);
+    run_git(root, &["config", "core.autocrlf", "false"]);
+    std::fs::write(root.join("keep.txt"), "original\n").expect("write");
+    std::fs::write(root.join("remove.txt"), "to be deleted\n").expect("write");
+    run_git(root, &["add", "."]);
+    run_git(root, &["commit", "-m", "initial"]);
+
+    std::fs::write(root.join("keep.txt"), "changed\n").expect("write");
+    std::fs::write(root.join("new.txt"), "brand new\n").expect("write");
+    std::fs::remove_file(root.join("remove.txt")).expect("remove");
+
+    let diffs = git::worktree_diff(root).await.expect("diff");
+    assert_eq!(diffs.len(), 3, "three files changed");
+
+    let find = |name: &str| {
+        diffs
+            .iter()
+            .find(|diff| diff.path == name)
+            .unwrap_or_else(|| panic!("missing {name}"))
+    };
+
+    let modified = find("keep.txt");
+    assert_eq!(modified.status, git::FileStatus::Modified);
+    assert_eq!(modified.old_text, "original\n");
+    assert_eq!(modified.new_text, "changed\n");
+
+    let added = find("new.txt");
+    assert_eq!(added.status, git::FileStatus::Added);
+    assert!(added.old_text.is_empty());
+    assert_eq!(added.new_text, "brand new\n");
+
+    let deleted = find("remove.txt");
+    assert_eq!(deleted.status, git::FileStatus::Deleted);
+    assert_eq!(deleted.old_text, "to be deleted\n");
+    assert!(deleted.new_text.is_empty());
+}
+
+#[tokio::test]
+async fn worktree_diff_is_empty_for_a_clean_tree() {
+    let repo = tempfile::tempdir().expect("tempdir");
+    init_repo(repo.path());
+    assert!(git::worktree_diff(repo.path())
+        .await
+        .expect("diff")
+        .is_empty());
+}
+
+#[tokio::test]
+async fn commit_all_stages_and_clears_pending_changes() {
+    let repo = tempfile::tempdir().expect("tempdir");
+    let root = repo.path();
+    init_repo(root);
+    std::fs::write(root.join("added.txt"), "new content\n").expect("write");
+    std::fs::write(root.join("file.txt"), "edited\n").expect("write");
+
+    git::commit_all(root, "viban: apply task")
+        .await
+        .expect("commit");
+
+    assert!(
+        git::worktree_diff(root).await.expect("diff").is_empty(),
+        "nothing is pending after a commit"
+    );
+    let log = Command::new("git")
+        .args(["log", "--oneline"])
+        .current_dir(root)
+        .output()
+        .expect("git log");
+    assert!(String::from_utf8_lossy(&log.stdout).contains("viban: apply task"));
+}
+
+#[tokio::test]
+async fn discard_all_restores_tracked_and_removes_untracked_files() {
+    let repo = tempfile::tempdir().expect("tempdir");
+    let root = repo.path();
+    init_repo(root);
+    std::fs::write(root.join("file.txt"), "tampered\n").expect("write");
+    std::fs::write(root.join("untracked.txt"), "junk\n").expect("write");
+
+    git::discard_all(root).await.expect("discard");
+
+    assert!(
+        git::worktree_diff(root).await.expect("diff").is_empty(),
+        "the worktree is clean after a discard"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("file.txt")).expect("read"),
+        "content\n",
+        "tracked files return to HEAD"
+    );
+    assert!(
+        !root.join("untracked.txt").exists(),
+        "untracked files are removed"
+    );
 }
