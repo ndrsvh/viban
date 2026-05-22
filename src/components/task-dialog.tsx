@@ -12,6 +12,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { rpc } from "@/lib/rpc";
+import { toast } from "@/stores/useToastStore";
 import type { Task } from "@/types/board";
 
 interface TaskDialogProps {
@@ -56,7 +57,7 @@ export function TaskDialog({
       onChanged();
       onOpenChange(false);
     } catch (err) {
-      console.error(err);
+      toast.error(`Could not save the task: ${String(err)}`);
     } finally {
       setBusy(false);
     }
@@ -70,7 +71,7 @@ export function TaskDialog({
       onChanged();
       onOpenChange(false);
     } catch (err) {
-      console.error(err);
+      toast.error(`Could not delete the task: ${String(err)}`);
     } finally {
       setBusy(false);
     }
