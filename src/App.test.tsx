@@ -83,7 +83,7 @@ describe("App", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows the board with a project header once connected", async () => {
+  it("shows the board and the project once connected", async () => {
     setInvoke((command) => {
       if (command === "current_project") {
         return Promise.resolve("/home/me/myproject");
@@ -108,7 +108,7 @@ describe("App", () => {
 
     render(<App />);
 
-    // The header shows the project's folder name.
+    // The status bar shows the project's folder name.
     expect(await screen.findByText("myproject")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Switch project" }),
