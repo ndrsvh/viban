@@ -2,6 +2,7 @@
 //!
 //! Uses `tokio-rusqlite` so database work never blocks the async runtime.
 
+mod boards;
 mod migrations;
 mod schema;
 

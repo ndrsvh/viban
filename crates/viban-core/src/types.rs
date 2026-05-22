@@ -32,3 +32,34 @@ pub struct Message {
     /// The raw agent event JSON, when the message came from one.
     pub raw_json: Option<String>,
 }
+
+/// A Kanban board — one per workspace in the current MVP.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Board {
+    pub id: String,
+    pub name: String,
+    pub project_path: String,
+    pub created_at: i64,
+}
+
+/// A column on a board, ordered by `position`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Column {
+    pub id: String,
+    pub board_id: String,
+    pub name: String,
+    pub position: i64,
+}
+
+/// A task card within a column, ordered by `position`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Task {
+    pub id: String,
+    pub column_id: String,
+    pub title: String,
+    pub description: String,
+    pub position: i64,
+    /// The viban session started from this task, if any.
+    pub session_id: Option<String>,
+    pub created_at: i64,
+}
