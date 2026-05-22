@@ -69,6 +69,8 @@ pub fn run() {
             commands::server_health,
             commands::open_session,
             commands::close_session,
+            commands::watch_task_status,
+            commands::unwatch_task_status,
             commands::spawn_session,
             commands::send_message,
             commands::start_session,

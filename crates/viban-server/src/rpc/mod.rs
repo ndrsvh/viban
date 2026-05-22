@@ -27,11 +27,16 @@ use tokio::sync::Mutex;
 
 use viban_core::agents::ClaudeSession;
 use viban_core::db::Db;
+use viban_core::types::AgentStatus;
 
 pub use events::EventSink;
 
 /// Running agent sessions for one connection, keyed by viban session id.
 pub type SessionRegistry = Arc<Mutex<HashMap<String, ClaudeSession>>>;
+
+/// Live agent status for one connection, keyed by task id. In-memory only —
+/// it reflects currently/recently running agents and resets with the server.
+pub type TaskStatuses = Arc<Mutex<HashMap<String, AgentStatus>>>;
 
 /// Everything a method handler needs — one `Context` per connection. Holding
 /// the registry and event sink here keeps every handler to the uniform
@@ -46,6 +51,8 @@ pub struct Context {
     pub registry: SessionRegistry,
     /// Push channel for `events.update` notifications to this client.
     pub events: EventSink,
+    /// Live per-task agent status (running / done / failed).
+    pub statuses: TaskStatuses,
 }
 
 #[derive(Debug, Deserialize)]
@@ -213,6 +220,7 @@ mod test_support {
             db,
             registry: Arc::new(Mutex::new(HashMap::new())),
             events: EventSink::new(outbound),
+            statuses: Arc::new(Mutex::new(HashMap::new())),
         };
         (ctx, workspace, data_dir)
     }

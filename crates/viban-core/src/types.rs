@@ -91,6 +91,29 @@ pub struct Task {
     pub created_at: i64,
 }
 
+/// The live state of a task's agent, surfaced on the board. Held in memory
+/// per connection — not persisted — and derived from the agent event stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../../src/types/generated/")]
+pub enum AgentStatus {
+    /// The agent is processing.
+    Running,
+    /// The agent finished its turn — ready for the user.
+    Done,
+    /// The agent's last turn errored, or the agent itself failed.
+    Failed,
+}
+
+/// A push update for one task's live agent status — the payload of a `tasks`
+/// topic notification.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../src/types/generated/")]
+pub struct TaskStatusUpdate {
+    pub task_id: String,
+    pub status: AgentStatus,
+}
+
 /// One agent run of a task, with its own session, worktree, and branch. A
 /// task may have several attempts; the task's own `session_id` /
 /// `worktree_path` / `branch` point at the currently active one.

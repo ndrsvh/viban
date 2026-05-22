@@ -9,10 +9,10 @@ use tokio::sync::mpsc;
 
 use viban_core::agents::spawn_claude;
 use viban_core::db::Db;
-use viban_core::types::{Message, Session};
+use viban_core::types::{AgentStatus, Message, Session, TaskStatusUpdate};
 use viban_core::{new_id, AgentEvent};
 
-use super::{now_millis, str_param, Context, EventSink, RpcError, SessionRegistry};
+use super::{now_millis, str_param, Context, EventSink, RpcError, SessionRegistry, TaskStatuses};
 
 /// Creates and persists a session, spawns a fresh Claude Code agent, and
 /// starts streaming + persisting its events. Serves the `agents.spawn` method.
@@ -21,6 +21,7 @@ pub(super) async fn spawn(params: Value, ctx: &Context) -> Result<Value, RpcErro
     let prompt = str_param(&params, "prompt")?;
 
     let workdir = agent_workdir(ctx, &session_id).await?;
+    let task_id = task_of(ctx, &session_id).await?;
     ctx.db
         .create_session(Session {
             id: session_id.clone(),
@@ -36,12 +37,17 @@ pub(super) async fn spawn(params: Value, ctx: &Context) -> Result<Value, RpcErro
     agent.send_message(prompt).await?;
 
     ctx.registry.lock().await.insert(session_id.clone(), agent);
+    if let Some(task_id) = &task_id {
+        publish_status(&ctx.statuses, &ctx.events, task_id, AgentStatus::Running).await;
+    }
     spawn_event_pump(
         agent_events,
         session_id.clone(),
+        task_id,
         ctx.db.clone(),
         Arc::clone(&ctx.registry),
         ctx.events.clone(),
+        Arc::clone(&ctx.statuses),
     );
 
     Ok(json!({ "session_id": session_id }))
@@ -52,6 +58,7 @@ pub(super) async fn spawn(params: Value, ctx: &Context) -> Result<Value, RpcErro
 pub(super) async fn send_message(params: Value, ctx: &Context) -> Result<Value, RpcError> {
     let session_id = str_param(&params, "session_id")?.to_string();
     let prompt = str_param(&params, "prompt")?;
+    let task_id = task_of(ctx, &session_id).await?;
 
     // Live session: send straight to the running agent.
     let delivered = {
@@ -84,12 +91,18 @@ pub(super) async fn send_message(params: Value, ctx: &Context) -> Result<Value, 
         spawn_event_pump(
             agent_events,
             session_id.clone(),
+            task_id.clone(),
             ctx.db.clone(),
             Arc::clone(&ctx.registry),
             ctx.events.clone(),
+            Arc::clone(&ctx.statuses),
         );
     }
 
+    // The agent is now processing this turn.
+    if let Some(task_id) = &task_id {
+        publish_status(&ctx.statuses, &ctx.events, task_id, AgentStatus::Running).await;
+    }
     persist_user_message(&ctx.db, &session_id, prompt).await?;
     Ok(json!({ "ok": true }))
 }
@@ -125,15 +138,56 @@ async fn agent_workdir(ctx: &Context, session_id: &str) -> Result<PathBuf, RpcEr
         .unwrap_or_else(|| ctx.workspace.clone()))
 }
 
+/// The id of the task a session belongs to, via its attempt, if any.
+async fn task_of(ctx: &Context, session_id: &str) -> Result<Option<String>, RpcError> {
+    let attempt = ctx
+        .db
+        .get_attempt_by_session(session_id.to_string())
+        .await?;
+    Ok(attempt.map(|attempt| attempt.task_id))
+}
+
+/// The status transition an agent event triggers, if any. Conversational
+/// events leave the agent `Running`; only the turn's end moves it.
+fn status_for(event: &AgentEvent) -> Option<AgentStatus> {
+    match event {
+        AgentEvent::Result { is_error: false } => Some(AgentStatus::Done),
+        AgentEvent::Result { is_error: true } => Some(AgentStatus::Failed),
+        AgentEvent::Error { .. } => Some(AgentStatus::Failed),
+        _ => None,
+    }
+}
+
+/// Records a task's live agent status and pushes it on the `tasks` topic.
+async fn publish_status(
+    statuses: &TaskStatuses,
+    events: &EventSink,
+    task_id: &str,
+    status: AgentStatus,
+) {
+    statuses.lock().await.insert(task_id.to_string(), status);
+    events.emit(
+        "tasks",
+        &TaskStatusUpdate {
+            task_id: task_id.to_string(),
+            status,
+        },
+    );
+}
+
 /// Forwards every agent event as an `events.update` notification on the
 /// session's topic, persists the conversational ones, records the Claude Code
-/// session id, and drops the session when the agent exits.
+/// session id, updates the task's live status, and drops the session when the
+/// agent exits.
+#[allow(clippy::too_many_arguments)]
 fn spawn_event_pump(
     mut agent_events: mpsc::UnboundedReceiver<AgentEvent>,
     session_id: String,
+    task_id: Option<String>,
     db: Db,
     registry: SessionRegistry,
     events: EventSink,
+    statuses: TaskStatuses,
 ) {
     tokio::spawn(async move {
         while let Some(event) = agent_events.recv().await {
@@ -150,6 +204,11 @@ fn spawn_event_pump(
             }
             if let Err(err) = persist_event(&db, &session_id, &event).await {
                 tracing::warn!(%err, "failed to persist agent event");
+            }
+
+            // Move the task's live status on the turn's end.
+            if let (Some(task_id), Some(status)) = (&task_id, status_for(&event)) {
+                publish_status(&statuses, &events, task_id, status).await;
             }
 
             // The session id is the topic — the chat view subscribes to it.
@@ -259,5 +318,35 @@ mod tests {
     fn make_title_falls_back_for_blank_input() {
         assert_eq!(make_title(""), "Untitled session");
         assert_eq!(make_title("   \n  "), "Untitled session");
+    }
+
+    #[test]
+    fn status_for_maps_the_turn_end_events() {
+        use viban_core::types::AgentStatus;
+        use viban_core::AgentEvent;
+        assert_eq!(
+            super::status_for(&AgentEvent::Result { is_error: false }),
+            Some(AgentStatus::Done),
+        );
+        assert_eq!(
+            super::status_for(&AgentEvent::Result { is_error: true }),
+            Some(AgentStatus::Failed),
+        );
+        assert_eq!(
+            super::status_for(&AgentEvent::Error {
+                message: "boom".into(),
+            }),
+            Some(AgentStatus::Failed),
+        );
+    }
+
+    #[test]
+    fn status_for_ignores_conversational_events() {
+        use viban_core::AgentEvent;
+        assert!(super::status_for(&AgentEvent::AssistantText { text: "hi".into() }).is_none());
+        assert!(super::status_for(&AgentEvent::SessionStarted {
+            session_id: "s".into(),
+        })
+        .is_none());
     }
 }

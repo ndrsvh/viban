@@ -85,6 +85,7 @@ async fn handle_connection(
         db,
         registry: Arc::new(Mutex::new(HashMap::new())),
         events: EventSink::new(outbound.clone()),
+        statuses: Arc::new(Mutex::new(HashMap::new())),
     };
 
     while let Some(message) = incoming.next().await {
